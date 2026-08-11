@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://huggingface.co/nanovdr">Models</a> &nbsp;|&nbsp;
   <a href="https://huggingface.co/spaces/nanovdr/NanoVDR-Demo">Demo</a> &nbsp;|&nbsp;
+  <a href="#write-ups">Write-ups</a> &nbsp;|&nbsp;
   <a href="#papers">Papers</a> &nbsp;|&nbsp;
   <a href="https://huggingface.co/datasets/nanovdr/NanoVDR-Train">Data</a> &nbsp;|&nbsp;
   <a href="#evaluation-harness">Eval harness</a>
@@ -291,6 +292,12 @@ cosine(student page, teacher page)      : 0.7959 mean
 NDCG@5  teacher queries x teacher pages : 86.91
 NDCG@5  teacher queries x student pages : 83.07   (95.6% retention)
 ```
+
+## Write-ups
+
+- [**Distilling the Document Tower**](https://huggingface.co/spaces/nanovdr/distilling-the-document-tower). How the 527M document tower was
+  distilled from an 8B teacher: the teacher and data choices, the architecture,
+  fourteen ablations, and the five things that did not work.
 
 ## Papers
 
