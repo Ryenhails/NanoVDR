@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="480" src="https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL2B-2048-ML/resolve/main/banner.png" alt="NanoVDR"/>
+  <img width="480" src="assets/banner.png" alt="NanoVDR"/>
 </p>
 
 <h3 align="center">Small retrievers for visual documents,<br>trained by aligning directly to a frozen VLM's embedding space</h3>
@@ -60,7 +60,7 @@ All four combinations retrieve; they differ in what you no longer have to run.
 |  | teacher documents | **student documents** |
 |---|---|---|
 | **teacher queries** | 71.05 — the ceiling, 8B on both sides | 65.02 — indexing 7x cheaper, teacher still runs per query |
-| **student queries** | 66.36 — query latency drops to 2 ms, index built once by the teacher | **61.74 — no teacher anywhere** |
+| **student queries** | 66.36 — queries encode on one CPU thread, index built once by the teacher | **61.74 — no teacher anywhere** |
 
 <sub>Average NDCG@5 over ViDoRe v1+v2+v3, against Qwen3-VL-Embedding-8B.</sub>
 
@@ -88,7 +88,7 @@ not comparable across teacher rows.
 
 | Model | Backbone | Params | Teacher | Width | v1 | v2 | v3 | CPU latency |
 |---|---|---|---|---|---|---|---|---|
-| [NanoVDR-Q-DistilBERT-Qwen3VL8B-4096](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL8B-4096) ⭐ | DistilBERT | 70M | 8B | 4096 | 84.68 | 64.30 | 50.09 | 2 ms |
+| [NanoVDR-Q-DistilBERT-Qwen3VL8B-4096](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL8B-4096) ⭐ | DistilBERT | 70M | 8B | 4096 | 84.68 | 64.30 | 50.09 | 51 ms |
 | [NanoVDR-Q-DistilBERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL2B-2048-ML) | DistilBERT | 69M | 2B | 2048 | 82.2 | 61.9 | 46.5 | 51 ms |
 | [NanoVDR-Q-BERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-BERT-Qwen3VL2B-2048-ML) | BERT-base | 112M | 2B | 2048 | 82.5 | 62.8 | 47.5 | 101 ms |
 | [NanoVDR-Q-ModernBERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-ModernBERT-Qwen3VL2B-2048-ML) | ModernBERT | 151M | 2B | 2048 | 82.2 | 63.1 | 47.1 | 109 ms |
@@ -97,7 +97,9 @@ not comparable across teacher rows.
 | [NanoVDR-Q-ModernBERT-Qwen3VL2B-2048](https://huggingface.co/nanovdr/NanoVDR-Q-ModernBERT-Qwen3VL2B-2048) | ModernBERT | 151M | 2B | 2048 | 82.4 | 61.5 | 44.2 | 109 ms |
 
 The 8B row is scored under query-side isolation; the 2B rows are as originally
-published. They are not comparable across teachers.
+published, and the two are not comparable across teachers. Latency is a single
+query on one CPU thread including tokenisation, and tracks the backbone only:
+the width of the output head is marginal beside it.
 
 ### Document towers
 
