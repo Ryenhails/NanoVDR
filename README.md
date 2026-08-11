@@ -76,8 +76,10 @@ NanoVDR-<Q|D>-<variant>-<teacher>-<width>[-ML]
 
 **A pair is valid when the teacher and the width both match.** The teacher
 fixes the embedding space; the width fixes which part of it is targeted, since
-a Matryoshka teacher can be aligned to at more than one width. `-ML` marks the
-multilingual training mixture.
+a Matryoshka teacher can be aligned to at more than one width. The variant and
+`-ML` describe how a tower was built rather than where it lands, so they never
+affect pairing: `-ML` marks the multilingual training mixture, added because
+the older `-Multi` read as multi-vector.
 
 ## Models
 
@@ -88,7 +90,7 @@ not comparable across teacher rows.
 
 | Model | Backbone | Params | Teacher | Width | v1 | v2 | v3 | CPU latency |
 |---|---|---|---|---|---|---|---|---|
-| [NanoVDR-Q-DistilBERT-Qwen3VL8B-4096](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL8B-4096) ⭐ | DistilBERT | 70M | 8B | 4096 | 84.68 | 64.30 | 50.09 | 51 ms |
+| [NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML) ⭐ | DistilBERT | 70M | 8B | 4096 | 84.68 | 64.30 | 50.09 | 51 ms |
 | [NanoVDR-Q-DistilBERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL2B-2048-ML) | DistilBERT | 69M | 2B | 2048 | 82.2 | 61.9 | 46.5 | 51 ms |
 | [NanoVDR-Q-BERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-BERT-Qwen3VL2B-2048-ML) | BERT-base | 112M | 2B | 2048 | 82.5 | 62.8 | 47.5 | 101 ms |
 | [NanoVDR-Q-ModernBERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-ModernBERT-Qwen3VL2B-2048-ML) | ModernBERT | 151M | 2B | 2048 | 82.2 | 63.1 | 47.1 | 109 ms |
@@ -134,14 +136,16 @@ proc = AutoImageProcessor.from_pretrained("nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-409
 doc_emb = doc.encode(pages, proc, batch_size=4)
 
 # query tower: text -> one vector in the same space
-query = SentenceTransformer("nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL8B-4096")
+query = SentenceTransformer("nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML")
 q_emb = query.encode(["What was the revenue growth in Q3 2024?"])
 
 scores = q_emb @ doc_emb.T
 ```
 
-Both sides here read `...-Qwen3VL8B-4096`, so they pair. Swap either one for
-the teacher and it still works; see the matrix above.
+Both sides carry the same teacher and width, `Qwen3VL8B-4096`, so they pair.
+`-ML` describes the query tower's training mixture, not the space it targets,
+so it plays no part in the pairing rule. Swap either side for the teacher and
+retrieval still works; see the matrix above.
 
 ---
 
