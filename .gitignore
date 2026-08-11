@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+hf/upload/
+hf/*.log
+*.safetensors
+*.pt
+*.h5
+.DS_Store
+hf/
