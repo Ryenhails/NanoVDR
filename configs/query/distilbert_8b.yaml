@@ -6,8 +6,10 @@ geometry:    single
 pool_type:   mean
 max_length:  512
 
-# Must match the instruction used when the teacher targets were cached.
-instruction: "Find a document image that matches the given query."
+# No instruction prefix. The instruction is applied when the *teacher* targets
+# are cached; the student learns to reproduce that embedding from the raw query
+# text, and prepending anything here would move its input off-distribution.
+instruction: null
 
 align: cosine
 
