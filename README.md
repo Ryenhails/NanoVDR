@@ -5,114 +5,123 @@
 <h3 align="center">Small retrievers for visual documents,<br>trained by aligning directly to a frozen VLM's embedding space</h3>
 
 <p align="center">
-  <a href="https://huggingface.co/nanovdr">Models</a> &nbsp;|&nbsp;
-  <a href="https://huggingface.co/spaces/nanovdr/NanoVDR-Demo">Demo</a> &nbsp;|&nbsp;
-  <a href="#write-ups">Write-ups</a> &nbsp;|&nbsp;
-  <a href="#papers">Papers</a> &nbsp;|&nbsp;
-  <a href="https://huggingface.co/datasets/nanovdr/NanoVDR-Train">Data</a> &nbsp;|&nbsp;
-  <a href="#evaluation-harness">Eval harness</a>
+  <a href="https://arxiv.org/abs/2603.12824"><img src="https://img.shields.io/badge/arXiv-2603.12824-b31b1b.svg?style=for-the-badge" alt="arXiv"></a>
+  <a href="https://huggingface.co/nanovdr"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Models-nanovdr-FFD21E?style=for-the-badge" alt="Hugging Face"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License"></a>
+</p>
+
+<p align="center">
+  [[<a href="https://huggingface.co/nanovdr">Models</a>]]
+  [[<a href="https://huggingface.co/spaces/nanovdr/NanoVDR-Demo">Demo</a>]]
+  [[<a href="https://huggingface.co/blog/Ryenhails/nanovdr">Blog</a>]]
+  [[<a href="https://huggingface.co/spaces/nanovdr/distilling-the-document-tower">Write-up</a>]]
+  [[<a href="https://huggingface.co/datasets/nanovdr/NanoVDR-Train">Dataset</a>]]
 </p>
 
 ---
 
-## One method, two towers
+## What this is
 
-Visual document retrieval pairs a **text query** with a **document image**. Every
-model in this repository is trained the same way: a frozen vision-language
-teacher encodes the input, a small student learns to reproduce that embedding,
-and the loss is a direct discrepancy between the two representations. No
-relevance labels, no negative mining, no contrastive sampling at student
-training time.
+Visual document retrieval pairs a **text query** with a **document image**, with
+no OCR in between. The models that do it well are 2B to 8B parameter
+vision-language models, which is fine for a query and expensive for a corpus.
 
-Because the teacher targets are cached once, the two towers are independent.
-You can train either alone and pair it with the teacher for the other side, or
-train both and drop the teacher entirely.
+**NanoVDR** makes the small half of that problem small. A frozen VLM teacher
+encodes the input once, a small student learns to reproduce that embedding, and
+the loss is a direct discrepancy between the two representations:
 
-| | encodes | output geometry | replaces the teacher at |
+```
+loss = 1 - cos(student, teacher)
+```
+
+No relevance labels, no negative mining, no contrastive sampling at student
+training time. Because the teacher targets are cached before training, the two
+sides are independent: you can train either one alone and pair it with the
+teacher for the other side.
+
+| | encodes | replaces the teacher at | output |
 |---|---|---|---|
-| **Query tower** | text | single vector **or** multi vector | query time |
-| **Doc tower** | page image | single vector | indexing time |
+| **Query tower** | text | query time | single vector, or multi vector |
+| **Document tower** | page image | indexing time | single vector |
 
-Multi-vector output is supported on the query side only. A single-vector
-objective is the one-atom special case of the multi-vector one, so both are
-entries in the same registry (`nanovdr/align/`) rather than separate codepaths.
+The **query tower is the main line of this project** and is what the NanoVDR
+paper is about. The **document tower is a branch**, added in DistilVDR, which
+removes the teacher from indexing as well and makes the pair teacher-free
+end to end.
 
 > 🚧 **Multi-vector query towers are under construction.** The encoder and its
 > transport objective are in the code already; checkpoints arrive with
 > NanoVDR-v2.
 
-```
-                       frozen teacher (Qwen3-VL-Embedding)
-                        /                            \
-              target vector                      target vector
-                    |                                  |
-              [ doc tower ]                      [ query tower ]
-              page image                         text query
-                    \__________ dot product / MaxSim _______/
-                          (teacher discarded at deployment)
-```
+---
 
-## Any half of the teacher, swapped
+## Models
 
-Both towers are trained into the same frozen teacher's embedding space, so
-either one is a drop-in replacement for the corresponding half of that teacher.
-All four combinations retrieve; they differ in what you no longer have to run.
+All checkpoints are on the Hub under [**huggingface.co/nanovdr**](https://huggingface.co/nanovdr).
+Scores are NDCG@5 on ViDoRe. A student is only ever as good as the space it was
+aligned to, so rows distilled from different teachers are not comparable to each
+other.
 
-|  | teacher documents | **student documents** |
-|---|---|---|
-| **teacher queries** | 71.05 — the ceiling, 8B on both sides | 65.02 — indexing 7x cheaper, teacher still runs per query |
-| **student queries** | 66.36 — queries encode on one CPU thread, index built once by the teacher | **61.74 — no teacher anywhere** |
+### Query towers
 
-<sub>Average NDCG@5 over ViDoRe v1+v2+v3, against Qwen3-VL-Embedding-8B.</sub>
+Text in, one vector in the teacher's space out. No vision model at query time.
 
-This is the point of aligning to a frozen space rather than training a new one:
-a student is interchangeable with the half of the teacher it replaces, so the
-two towers can be adopted separately and in either order.
+| Model | Params | Teacher | Width | v1 | v2 | v3 | CPU latency | Comments |
+|---|---|---|---|---|---|---|---|---|
+| [NanoVDR-Q-DistilBERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL2B-2048-ML) ⭐ | 69M | 2B | 2048 | 82.2 | 61.9 | 46.5 | **51 ms** | • DistilBERT.<br />• The NanoVDR paper's headline model.<br />• Best quality per millisecond. |
+| [NanoVDR-Q-BERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-BERT-Qwen3VL2B-2048-ML) | 112M | 2B | 2048 | 82.5 | 62.8 | 47.5 | 101 ms | • BERT-base.<br />• Highest v2 and v3 in the 2B family. |
+| [NanoVDR-Q-ModernBERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-ModernBERT-Qwen3VL2B-2048-ML) | 151M | 2B | 2048 | 82.2 | 63.1 | 47.1 | 109 ms | • ModernBERT-base.<br />• 8192-token context if your queries are long. |
+| [NanoVDR-Q-DistilBERT-Qwen3VL2B-2048](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL2B-2048) | 69M | 2B | 2048 | 82.2 | 60.5 | 43.5 | 51 ms | • English-only training mixture.<br />• Use `-ML` above unless you have a reason. |
+| [NanoVDR-Q-BERT-Qwen3VL2B-2048](https://huggingface.co/nanovdr/NanoVDR-Q-BERT-Qwen3VL2B-2048) | 112M | 2B | 2048 | 82.1 | 62.2 | 44.7 | 101 ms | • English-only counterpart of the BERT row. |
+| [NanoVDR-Q-ModernBERT-Qwen3VL2B-2048](https://huggingface.co/nanovdr/NanoVDR-Q-ModernBERT-Qwen3VL2B-2048) | 151M | 2B | 2048 | 82.4 | 61.5 | 44.2 | 109 ms | • English-only counterpart of the ModernBERT row. |
+| [NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML) | 70M | 8B | 4096 | 84.68 | 64.30 | 50.09 | 51 ms | • From DistilVDR, not the NanoVDR paper.<br />• The only query tower that pairs with a document tower. |
 
-## Naming
+<sub>The 2B rows are as published in the NanoVDR paper. The 8B row is scored
+under query-side isolation and is not comparable to them. Latency is one query
+on one CPU thread including tokenisation, and tracks the backbone: the width of
+the output head is marginal beside it.</sub>
+
+### Document towers
+
+Page image in, one vector out. These come from **DistilVDR** and exist to
+remove the teacher from indexing.
+
+| Model | Params | Teacher | Width | Tiles | v1 | v2 | v3 | Avg | Comments |
+|---|---|---|---|---|---|---|---|---|---|
+| [NanoVDR-D-HiRes-Qwen3VL8B-4096](https://huggingface.co/nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-4096) ⭐ | 457M | 8B | 4096 | 6 + thumbnail | 82.81 | 55.34 | 47.07 | **61.74** | • InternViT-300M + ModernBERT-base.<br />• 36.8 pages/s, 3.07 GB VRAM.<br />• Take this one for dense reports. |
+| [NanoVDR-D-Fast-Qwen3VL8B-4096](https://huggingface.co/nanovdr/NanoVDR-D-Fast-Qwen3VL8B-4096) | 457M | 8B | 4096 | 2 + thumbnail | 81.34 | 54.95 | 43.66 | 59.98 | • Same architecture and recipe, smaller tile budget.<br />• 99.0 pages/s, 2.10 GB VRAM.<br />• Take this one for volume. |
+
+<sub>Scored end to end, paired with NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML,
+527M total. Throughput is one H200 at batch size 8 in bf16.</sub>
+
+### Which pair to use
 
 ```
 NanoVDR-<Q|D>-<variant>-<teacher>-<width>[-ML]
 ```
 
-**A pair is valid when the teacher and the width both match.** The teacher
-fixes the embedding space; the width fixes which part of it is targeted, since
-a Matryoshka teacher can be aligned to at more than one width. The variant and
+**A pair is valid when the teacher and the width both match.** The teacher fixes
+the embedding space; the width fixes which part of it is targeted, since a
+Matryoshka teacher can be aligned to at more than one width. The variant and
 `-ML` describe how a tower was built rather than where it lands, so they never
-affect pairing: `-ML` marks the multilingual training mixture, added because
-the older `-Multi` read as multi-vector.
+affect pairing. `-ML` marks the multilingual training mixture.
 
-## Models
+In practice there are two configurations:
 
-Retention is measured against **that model's own teacher**, so the column is
-not comparable across teacher rows.
+| | index with | query with | teacher needed |
+|---|---|---|---|
+| **NanoVDR (main line)** | Qwen3-VL-Embedding-2B | any `-Qwen3VL2B-2048` tower | at indexing time |
+| **DistilVDR (branch)** | `NanoVDR-D-*-Qwen3VL8B-4096` | `NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML` | never |
 
-### Query towers
+Because both towers land in the same frozen space, either can be swapped for
+the corresponding half of the teacher. All four combinations retrieve:
 
-| Model | Backbone | Params | Teacher | Width | v1 | v2 | v3 | CPU latency |
-|---|---|---|---|---|---|---|---|---|
-| [NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML) ⭐ | DistilBERT | 70M | 8B | 4096 | 84.68 | 64.30 | 50.09 | 51 ms |
-| [NanoVDR-Q-DistilBERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL2B-2048-ML) | DistilBERT | 69M | 2B | 2048 | 82.2 | 61.9 | 46.5 | 51 ms |
-| [NanoVDR-Q-BERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-BERT-Qwen3VL2B-2048-ML) | BERT-base | 112M | 2B | 2048 | 82.5 | 62.8 | 47.5 | 101 ms |
-| [NanoVDR-Q-ModernBERT-Qwen3VL2B-2048-ML](https://huggingface.co/nanovdr/NanoVDR-Q-ModernBERT-Qwen3VL2B-2048-ML) | ModernBERT | 151M | 2B | 2048 | 82.2 | 63.1 | 47.1 | 109 ms |
-| [NanoVDR-Q-DistilBERT-Qwen3VL2B-2048](https://huggingface.co/nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL2B-2048) | DistilBERT | 69M | 2B | 2048 | 82.2 | 60.5 | 43.5 | 51 ms |
-| [NanoVDR-Q-BERT-Qwen3VL2B-2048](https://huggingface.co/nanovdr/NanoVDR-Q-BERT-Qwen3VL2B-2048) | BERT-base | 112M | 2B | 2048 | 82.1 | 62.2 | 44.7 | 101 ms |
-| [NanoVDR-Q-ModernBERT-Qwen3VL2B-2048](https://huggingface.co/nanovdr/NanoVDR-Q-ModernBERT-Qwen3VL2B-2048) | ModernBERT | 151M | 2B | 2048 | 82.4 | 61.5 | 44.2 | 109 ms |
+|  | teacher documents | **student documents** |
+|---|---|---|
+| **teacher queries** | 71.05, the 8B ceiling | 65.02, indexing 7x cheaper |
+| **student queries** | 66.36, queries on one CPU thread | **61.74, no teacher anywhere** |
 
-The 8B row is scored under query-side isolation; the 2B rows are as originally
-published, and the two are not comparable across teachers. Latency is a single
-query on one CPU thread including tokenisation, and tracks the backbone only:
-the width of the output head is marginal beside it.
-
-### Document towers
-
-| Model | Visual + text backbone | Params | Teacher | Width | Tiles | v1 | v2 | v3 | Avg |
-|---|---|---|---|---|---|---|---|---|---|
-| [NanoVDR-D-HiRes-Qwen3VL8B-4096](https://huggingface.co/nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-4096) ⭐ | InternViT-300M + ModernBERT-base | 457M | 8B | 4096 | 6 | 82.81 | 55.34 | 47.07 | **61.74** |
-| [NanoVDR-D-Fast-Qwen3VL8B-4096](https://huggingface.co/nanovdr/NanoVDR-D-Fast-Qwen3VL8B-4096) | InternViT-300M + ModernBERT-base | 457M | 8B | 4096 | 2 | 81.34 | 54.95 | 43.66 | 59.98 |
-
-Every model here was renamed on 2026-08-11 to make the pairing rule readable
-from the name; the old links redirect and each card records its former name.
+<sub>Average NDCG@5 over ViDoRe v1+v2+v3 against Qwen3-VL-Embedding-8B.</sub>
 
 ---
 
@@ -124,23 +133,41 @@ pip install -e .          # add [train] or [eval] for the optional extras
 
 ## Quick start
 
-Every released checkpoint also runs straight from the Hub, with no dependency
-on this repository. Both towers are one call, and it is the same call.
+Every released checkpoint runs straight from the Hub with no dependency on this
+repository.
+
+### Query tower
+
+The main line. Documents are indexed offline by the teacher; queries never
+touch a vision model.
 
 ```python
-from sentence_transformers import SentenceTransformer      # >= 5.4 for the doc tower
+from sentence_transformers import SentenceTransformer
 
-doc = SentenceTransformer("nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-4096", trust_remote_code=True)
+query = SentenceTransformer("nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL2B-2048-ML")
+q_emb = query.encode(["What was the revenue growth in Q3 2024?"])   # (1, 2048)
+
+scores = q_emb @ doc_emb.T      # doc_emb from Qwen3-VL-Embedding-2B
+```
+
+### Query tower plus document tower
+
+The DistilVDR branch. Nothing multi-billion runs at any point.
+
+```python
+from sentence_transformers import SentenceTransformer   # >= 5.4 for the document tower
+
 query = SentenceTransformer("nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML")
+doc = SentenceTransformer("nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-4096", trust_remote_code=True)
 
-doc_emb = doc.encode(pages)                                # PIL pages -> (N, 4096)
 q_emb = query.encode(["What was the revenue growth in Q3 2024?"])
+doc_emb = doc.encode(pages)                             # PIL page images -> (N, 4096)
 
 scores = q_emb @ doc_emb.T
 ```
 
-Through `transformers` instead, which has no version floor and returns the same
-vectors:
+The document tower also loads through plain `transformers`, which has no
+version floor and returns the same vectors:
 
 ```python
 from transformers import AutoModel, AutoImageProcessor
@@ -150,17 +177,16 @@ proc = AutoImageProcessor.from_pretrained("nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-409
 doc_emb = doc.encode(pages, proc, batch_size=4)
 ```
 
-Both sides carry the same teacher and width, `Qwen3VL8B-4096`, so they pair.
-`-ML` describes the query tower's training mixture, not the space it targets,
-so it plays no part in the pairing rule. Swap either side for the teacher and
-retrieval still works; see the matrix above.
+`proc` is a `NanoVDRDocImageProcessor`. It tiles the page and returns the
+`tile_mask` the model needs next to `pixel_values`, so a stock single-view image
+processor is not a substitute.
 
 ---
 
 ## Training
 
-All three training entry points read the same config schema and differ only in
-which tower they instantiate.
+Both towers read the same config schema and differ only in which one they
+instantiate.
 
 ```bash
 # query tower, single vector
@@ -182,9 +208,8 @@ nanovdr-cache --data $DATA_ROOT/queries   --out $CACHE_ROOT/teacher_8b/queries.h
 ```
 
 Caching the 1.20M-image and 1.49M-query mixture against the 8B teacher took
-99.5 H200-GPU-hours in total. It is a one-time cost: every checkpoint and
-every ablation in the paper reuses the same cache, and the teacher is never
-loaded during student training.
+99.5 H200-GPU-hours. It is a one-time cost: every checkpoint and every ablation
+reuses the same cache, and the teacher is never loaded during student training.
 
 ### Alignment objectives
 
@@ -196,9 +221,9 @@ registry for both geometries:
 | `cosine` | single | `1 - <s, t>`; the default everywhere on the single-vector side |
 | `ot` | multi | entropic Sinkhorn transport between the two token measures |
 
-Every objective consumes only the student representation and its cached
-teacher target. None of them needs documents, negatives, or relevance labels
-at training time, which is what lets the two towers train independently.
+Every objective consumes only the student representation and its cached teacher
+target. None of them needs documents, negatives, or relevance labels at training
+time, which is what lets the two towers train independently.
 
 ```python
 from nanovdr.align import get_align_loss, available_align_losses
@@ -213,10 +238,10 @@ Registering a new objective is one decorator; nothing else changes.
 
 ## Evaluation harness
 
-`eval/` reproduces **twelve publicly released retrievers plus the teacher**
-under one protocol: same evaluation driver, same input formatting, same
-deduplication, same metric code. It reports retrieval quality *and* deployment
-cost side by side.
+`nanovdr-eval` reproduces **twelve publicly released retrievers plus the
+teacher** under one protocol: same evaluation driver, same input formatting,
+same deduplication, same metric code. It reports retrieval quality *and*
+deployment cost side by side.
 
 ```bash
 nanovdr-eval --doc-model nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-4096 \
@@ -231,17 +256,17 @@ profile_model(doc_tower, pages, batch_size=8)
 ```
 
 Measured per model: NDCG@5 on ViDoRe v1/v2/v3, query latency, document
-throughput, peak VRAM, index size per million documents, and CPU scoring
-latency at 10K candidates.
+throughput, peak VRAM, index size per million documents, and CPU scoring latency
+at 10K candidates.
 
-The harness carries the per-baseline handling that these models need in order
-to reproduce their published behaviour — float32 for BiModernVBERT, the
-released chat-template path with `use_cache=False` for DSE-Qwen2, the native
+The harness carries the per-baseline handling these models need to
+reproduce their published behaviour: float32 for BiModernVBERT, the released
+chat-template path with `use_cache=False` for DSE-Qwen2, the native
 flash-attention path for InternViT, and so on. If you only take one thing from
 this repository, take this.
 
-`nanovdr-eval` writes per-dataset JSON, so a reported number can be traced to
-the dataset it came from without rerunning the sweep.
+Output is per-dataset JSON, so a reported number can be traced to the dataset it
+came from without rerunning the sweep.
 
 ---
 
@@ -278,13 +303,13 @@ tests/                objective registry and preprocessing tests, no GPU needed
 
 A page does not reach the model as one 448px view. It is cut into
 aspect-ratio-matched tiles plus a thumbnail, zero-padded to a fixed budget and
-paired with a mask, and that rule lives in `processing_doc.py` alone so it
-cannot drift between training, evaluation and release. `tests/test_processing.py`
+paired with a mask, and that rule lives in `processing_doc.py` alone so it cannot
+drift between training, evaluation and release. `tests/test_processing.py`
 asserts the processor is bit-identical to the preprocessing the released weights
 were trained on, across five page aspect ratios.
 
-`packaging/verify_doc_package.py` is how we established that the released
-weights reproduce our internal evaluation:
+`packaging/verify_doc_package.py` is how we established that the released weights
+reproduce our internal evaluation:
 
 ```
 500 pages of ViDoRe arxivqa, NanoVDR-D-HiRes-Qwen3VL8B-4096
@@ -293,20 +318,18 @@ NDCG@5  teacher queries x teacher pages : 86.91
 NDCG@5  teacher queries x student pages : 83.07   (95.6% retention)
 ```
 
-## Write-ups
+---
 
-- [**Distilling the Document Tower**](https://huggingface.co/spaces/nanovdr/distilling-the-document-tower). How the 527M document tower was
-  distilled from an 8B teacher: the teacher and data choices, the architecture,
-  fourteen ablations, and the five things that did not work.
+## Papers and write-ups
 
-## Papers
+| | What | Where |
+|---|---|---|
+| **NanoVDR** | The main line: a 70M text-only query tower distilled from a 2B teacher. | [arXiv:2603.12824](https://arxiv.org/abs/2603.12824) · [blog](https://huggingface.co/blog/Ryenhails/nanovdr) |
+| **DistilVDR** | The branch: adds the document tower, so both sides are students and the teacher is gone at deployment. | preprint on arXiv, identifier being added here as soon as it is announced · [write-up](https://huggingface.co/spaces/nanovdr/distilling-the-document-tower) |
+| **NanoVDR-v2** | Multi-vector query towers. 🚧 Under construction. | |
 
-- **NanoVDR**, single-vector query tower distilled from a 2B teacher.
-  [arXiv:2603.12824](https://arxiv.org/abs/2603.12824)
-- **DistilVDR**, both towers distilled from an 8B teacher, end-to-end and
-  teacher-free at deployment. Preprint on arXiv; identifier being added here as
-  soon as it is announced.
-- **NanoVDR-v2**, multi-vector query tower. 🚧 Under construction.
+Every model was renamed on 2026-08-11 to make the pairing rule readable from
+the name. The old links redirect and each model card records its former name.
 
 ## Citation
 
