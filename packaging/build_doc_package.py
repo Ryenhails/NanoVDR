@@ -22,6 +22,43 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "nanovdr" / "towers"))
 
 from modeling_doc import NanoVDRDocConfig, NanoVDRDocModel  # noqa: E402
+from processing_doc import NanoVDRDocImageProcessor  # noqa: E402
+
+
+def write_sentence_transformers_files(out: Path) -> None:
+    """Make the package loadable as a SentenceTransformer as well.
+
+    The same directory then serves both APIs: ``AutoModel`` for the transformers
+    idiom and ``SentenceTransformer`` for the one the query towers already use,
+    which is the point - a dual-tower release where the two halves are called
+    differently is a release with a seam in it.
+
+    The tower is a single module: it already pools, projects and L2-normalises,
+    so there is no Pooling/Dense/Normalize stack on top and the model's own
+    output is the sentence embedding. Only three small files are needed, and
+    none of them requires sentence-transformers at build time.
+    """
+    (out / "modules.json").write_text(json.dumps([
+        {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Transformer"}
+    ], indent=2) + "\n")
+
+    # "image" is how sentence-transformers labels PIL inputs; "embedding" is the
+    # field of NanoVDRDocOutput; "sentence_embedding" is where encode() looks.
+    (out / "sentence_bert_config.json").write_text(json.dumps({
+        "transformer_task": "feature-extraction",
+        "modality_config": {"image": {"method": "forward", "method_output_name": "embedding"}},
+        "module_output_name": "sentence_embedding",
+    }, indent=2) + "\n")
+
+    (out / "config_sentence_transformers.json").write_text(json.dumps({
+        "model_type": "SentenceTransformer",
+        # Embeddings are L2-normalised, so this agrees with cosine; dot is what
+        # the index actually computes.
+        "similarity_fn_name": "dot",
+        # modality_config landed in 5.4; older versions load the model and then
+        # route pages to the text branch.
+        "__version__": {"sentence_transformers": "5.4.0"},
+    }, indent=2) + "\n")
 
 
 def main() -> int:
@@ -74,14 +111,33 @@ def main() -> int:
 
     model = model.float().eval()
     model.save_pretrained(out, safe_serialization=True)
-    shutil.copy(HERE.parent / "nanovdr" / "towers" / "modeling_doc.py",
-                out / "modeling_nanovdr_doc.py")
+    towers = HERE.parent / "nanovdr" / "towers"
+    shutil.copy(towers / "modeling_doc.py", out / "modeling_nanovdr_doc.py")
+    shutil.copy(towers / "processing_doc.py", out / "processing_nanovdr_doc.py")
 
-    # image processor: the visual encoder's own, so preprocessing matches training
+    # Image processor: the visual encoder's pixel statistics, plus this
+    # checkpoint's tiling. Shipping the tiling settings inside the processor is
+    # what makes processor(images=pages) -> model(**inputs) correct; a stock
+    # single-view processor is silently wrong here, not loudly wrong.
     from transformers import AutoImageProcessor
 
-    proc = AutoImageProcessor.from_pretrained(cfg.visual_encoder_name, trust_remote_code=True)
+    base = AutoImageProcessor.from_pretrained(cfg.visual_encoder_name, trust_remote_code=True)
+    proc = NanoVDRDocImageProcessor.from_image_processor(
+        base,
+        tile_min_num=cfg.tile_min_num,
+        tile_max_num=cfg.tile_max_num,
+        tile_max_total=cfg.tile_max_total,
+        tile_use_thumbnail=cfg.tile_use_thumbnail,
+        image_size=cfg.image_size,
+    )
+    # Both keys: transformers resolves AutoImageProcessor, sentence-transformers
+    # goes through AutoProcessor.
+    proc.auto_map = {
+        "AutoImageProcessor": "processing_nanovdr_doc.NanoVDRDocImageProcessor",
+        "AutoProcessor": "processing_nanovdr_doc.NanoVDRDocImageProcessor",
+    }
     proc.save_pretrained(out)
+    write_sentence_transformers_files(out)
 
     print(f"\nwrote {out}")
     for f in sorted(out.iterdir()):

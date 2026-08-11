@@ -16,9 +16,40 @@ import torch
 import torch.nn as nn
 
 from ..align import Repr
-from .modeling_doc import NanoVDRDocConfig, NanoVDRDocModel, dynamic_tile
+from .modeling_doc import NanoVDRDocConfig, NanoVDRDocModel
+from .processing_doc import NanoVDRDocImageProcessor, dynamic_tile
 
-__all__ = ["DocTower", "NanoVDRDocConfig", "NanoVDRDocModel", "dynamic_tile"]
+__all__ = [
+    "DocTower",
+    "NanoVDRDocConfig",
+    "NanoVDRDocModel",
+    "NanoVDRDocImageProcessor",
+    "dynamic_tile",
+]
+
+
+def doc_processor_for(config: NanoVDRDocConfig, base=None) -> NanoVDRDocImageProcessor:
+    """The image processor a tower with this config needs.
+
+    ``base`` supplies the pixel statistics and defaults to the visual encoder's
+    own processor, which is where they came from at training time. Passing a
+    processor that already tiles returns it unchanged, so this is safe to call
+    on anything.
+    """
+    if isinstance(base, NanoVDRDocImageProcessor):
+        return base
+    if base is None:
+        from transformers import AutoImageProcessor
+
+        base = AutoImageProcessor.from_pretrained(config.visual_encoder_name, trust_remote_code=True)
+    return NanoVDRDocImageProcessor.from_image_processor(
+        base,
+        tile_min_num=config.tile_min_num,
+        tile_max_num=config.tile_max_num,
+        tile_max_total=config.tile_max_total,
+        tile_use_thumbnail=config.tile_use_thumbnail,
+        image_size=config.image_size,
+    )
 
 
 class DocTower(nn.Module):
@@ -42,22 +73,26 @@ class DocTower(nn.Module):
     # -- construction ------------------------------------------------------
     @classmethod
     def from_pretrained(cls, name_or_path: str, **kwargs) -> "DocTower":
-        """Load a released checkpoint from the Hub or a local directory."""
+        """Load a released checkpoint from the Hub or a local directory.
+
+        Checkpoints packaged before tiling moved into the processor carry a
+        plain single-view one; it is upgraded here from the model config rather
+        than used as-is, since feeding this model single views is the one
+        mistake that degrades quality without raising anything.
+        """
         from transformers import AutoImageProcessor
 
         model = NanoVDRDocModel.from_pretrained(name_or_path, **kwargs)
         try:
-            processor = AutoImageProcessor.from_pretrained(name_or_path, trust_remote_code=True)
+            base = AutoImageProcessor.from_pretrained(name_or_path, trust_remote_code=True)
         except Exception:
-            processor = AutoImageProcessor.from_pretrained(
-                model.config.visual_encoder_name, trust_remote_code=True
-            )
-        return cls(model, processor)
+            base = None
+        return cls(model, doc_processor_for(model.config, base))
 
     @classmethod
     def from_config(cls, config: NanoVDRDocConfig, processor=None) -> "DocTower":
         """Build an untrained tower, for training from the pretrained backbones."""
-        return cls(NanoVDRDocModel(config), processor)
+        return cls(NanoVDRDocModel(config), doc_processor_for(config, processor))
 
     # -- properties --------------------------------------------------------
     @property

@@ -2,8 +2,10 @@
 
 Both towers train against the same shape of thing: a source Arrow dataset and
 an HDF5 file of teacher embeddings whose rows line up with it. Everything that
-differs between the towers (tiling and image preprocessing on one side,
-tokenisation on the other) is confined to the collate function.
+differs between the towers is delegated: pages go through the released image
+processor, queries through the tower's own tokenizer. Neither preprocessing
+rule is written out here, so neither can drift from what the released model
+does.
 
 A mixture is a base dataset plus zero or more supplements, each with its own
 target cache and an integer upsample factor. Supplements are concatenated
@@ -22,7 +24,7 @@ import torch
 from torch.utils.data import Dataset
 
 from .teacher import load_targets
-from .tiling import dynamic_tile
+from .towers.processing_doc import NanoVDRDocImageProcessor
 
 __all__ = ["SourceSpec", "DocTargetDataset", "QueryTargetDataset", "doc_collate", "make_query_collate"]
 
@@ -95,8 +97,9 @@ class _MixtureDataset(Dataset):
 class DocTargetDataset(_MixtureDataset):
     """Page images with their cached teacher targets.
 
-    Tiling happens here rather than in the model so the expensive part runs in
-    dataloader workers, and so a batch arrives as one padded tensor.
+    Preprocessing runs here, in dataloader workers, because tiling a page is
+    the expensive part of a document batch. What it runs is the released
+    processor, so training and inference cannot preprocess differently.
     """
 
     def __init__(
@@ -113,29 +116,29 @@ class DocTargetDataset(_MixtureDataset):
         verbose: bool = True,
     ):
         super().__init__(sources, embed_dim, column, verbose)
-        self.processor = processor
-        self.tile_min_num = tile_min_num
-        self.tile_max_num = tile_max_num
-        self.tile_use_thumbnail = tile_use_thumbnail
-        self.image_size = image_size
-        self.tile_max_total = tile_max_total or (tile_max_num + (1 if tile_use_thumbnail else 0))
+        # A plain image processor is accepted and upgraded: its pixel statistics
+        # are kept and the tile settings given here are added on top.
+        self.processor = (
+            processor
+            if isinstance(processor, NanoVDRDocImageProcessor)
+            else NanoVDRDocImageProcessor.from_image_processor(
+                processor,
+                tile_min_num=tile_min_num,
+                tile_max_num=tile_max_num,
+                tile_max_total=tile_max_total,
+                tile_use_thumbnail=tile_use_thumbnail,
+                image_size=image_size,
+            )
+        )
 
     def __getitem__(self, i: int) -> dict[str, torch.Tensor]:
         image, target = self._lookup(i)
-        tiles = dynamic_tile(
-            image.convert("RGB"),
-            min_num=self.tile_min_num,
-            max_num=self.tile_max_num,
-            image_size=self.image_size,
-            use_thumbnail=self.tile_use_thumbnail,
-        )[: self.tile_max_total]
-        px = self.processor(images=tiles, return_tensors="pt")["pixel_values"]
-
-        padded = torch.zeros(self.tile_max_total, 3, self.image_size, self.image_size, dtype=px.dtype)
-        padded[: px.size(0)] = px
-        mask = torch.zeros(self.tile_max_total, dtype=torch.bool)
-        mask[: px.size(0)] = True
-        return {"pixel_values": padded, "tile_mask": mask, "target": target}
+        batch = self.processor(images=image, return_tensors="pt")
+        return {
+            "pixel_values": batch["pixel_values"][0],
+            "tile_mask": batch["tile_mask"][0],
+            "target": target,
+        }
 
 
 def doc_collate(batch: list[dict]) -> dict[str, torch.Tensor]:

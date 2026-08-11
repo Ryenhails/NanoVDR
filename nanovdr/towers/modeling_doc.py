@@ -9,15 +9,21 @@ embedding space.
 Retrieval is a dot product against a query vector from the matching NanoVDR
 query tower, or against the teacher itself.
 
+Tiling is *not* here. It lives in ``NanoVDRDocImageProcessor``, which ships
+alongside this file, because it is preprocessing and because having one home for
+it is what makes ``processor(images=pages)`` produce exactly the tensors this
+model was trained on.
+
 This file is self-contained: it is the only source of truth for the forward
-pass and does not import from the training repository.
+pass and does not import from the training repository or from the processor.
 """
 
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Union
+from typing import Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
@@ -66,59 +72,6 @@ class NanoVDRDocConfig(PretrainedConfig):
         self.use_flash_attn = use_flash_attn
         self.text_attn_implementation = text_attn_implementation
         super().__init__(**kwargs)
-
-
-# --------------------------------------------------------------------------
-# Dynamic tiling (InternVL-V2 partition rule)
-# --------------------------------------------------------------------------
-def _closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_size):
-    best_diff, best = float("inf"), (1, 1)
-    area = width * height
-    for ratio in target_ratios:
-        target = ratio[0] / ratio[1]
-        diff = abs(aspect_ratio - target)
-        if diff < best_diff:
-            best_diff, best = diff, ratio
-        elif diff == best_diff:
-            if area > 0.5 * image_size * image_size * ratio[0] * ratio[1]:
-                best = ratio
-    return best
-
-
-def dynamic_tile(
-    image,
-    min_num: int = 1,
-    max_num: int = 6,
-    image_size: int = IMAGE_SIZE,
-    use_thumbnail: bool = True,
-) -> list:
-    """Split a page into aspect-ratio-matched ``image_size`` crops.
-
-    The final element is a whole-page thumbnail when ``use_thumbnail`` is set
-    and more than one crop was produced. Returns a list of PIL images.
-    """
-    orig_w, orig_h = image.size
-    aspect_ratio = orig_w / orig_h
-    target_ratios = sorted(
-        {
-            (i, j)
-            for n in range(min_num, max_num + 1)
-            for i in range(1, n + 1)
-            for j in range(1, n + 1)
-            if i * j <= max_num and i * j >= min_num
-        },
-        key=lambda x: x[0] * x[1],
-    )
-    cols, rows = _closest_aspect_ratio(aspect_ratio, target_ratios, orig_w, orig_h, image_size)
-    resized = image.resize((image_size * cols, image_size * rows))
-    tiles = []
-    for i in range(cols * rows):
-        c, r = i % cols, i // cols
-        box = (c * image_size, r * image_size, (c + 1) * image_size, (r + 1) * image_size)
-        tiles.append(resized.crop(box))
-    if use_thumbnail and len(tiles) > 1:
-        tiles.append(image.resize((image_size, image_size)))
-    return tiles
 
 
 @dataclass
@@ -189,6 +142,12 @@ class NanoVDRDocModel(PreTrainedModel):
             Tiled pages, zero-padded to ``T`` tiles, or a single view per page.
         tile_mask : (B, T) bool
             True for real tiles. Required when ``pixel_values`` is 5-D.
+
+        A 4-D input is accepted but is not how the released towers were
+        trained. Downscaling a whole page to one 448px view destroys the small
+        text that document retrieval turns on, and the resulting embeddings are
+        substantially worse while looking perfectly well-formed, so this case
+        warns rather than failing silently.
         """
         tiled = pixel_values.dim() == 5
         if tiled:
@@ -199,6 +158,14 @@ class NanoVDRDocModel(PreTrainedModel):
         else:
             B, T = pixel_values.size(0), 1
             pv = pixel_values
+            warnings.warn(
+                "NanoVDRDocModel received a single 448px view per page (4-D pixel_values) "
+                "instead of tiles. Retrieval quality drops markedly. Use "
+                "NanoVDRDocImageProcessor, which emits pixel_values and tile_mask together: "
+                "processor = AutoImageProcessor.from_pretrained(<repo>, trust_remote_code=True)",
+                UserWarning,
+                stacklevel=2,
+            )
 
         vis_dtype = next(self.visual_encoder.parameters()).dtype
         vis_out = self.visual_encoder(pixel_values=pv.to(vis_dtype))
@@ -252,37 +219,29 @@ class NanoVDRDocModel(PreTrainedModel):
         batch_size: int = 8,
         device: Optional[Union[str, torch.device]] = None,
     ) -> torch.Tensor:
-        """Tile, preprocess and encode PIL pages. Returns (N, embed_dim) on CPU."""
+        """Batch, preprocess and encode PIL pages. Returns (N, embed_dim) on CPU.
+
+        ``processor`` must be a ``NanoVDRDocImageProcessor``; a stock image
+        processor emits one view per page and no tile mask, which this model
+        would accept and quietly underperform on.
+        """
         from PIL import Image  # local import; PIL is not a hard dependency of import
 
         if isinstance(images, Image.Image):
             images = [images]
+        if not getattr(processor, "do_tile", False):
+            raise ValueError(
+                f"{type(processor).__name__} does not tile. The document tower needs "
+                "NanoVDRDocImageProcessor, which ships with every NanoVDR document "
+                "checkpoint: AutoImageProcessor.from_pretrained(<repo>, trust_remote_code=True)."
+            )
         device = device or next(self.parameters()).device
-        cfg, out = self.cfg, []
+        out = []
         self.eval()
 
         for start in range(0, len(images), batch_size):
-            chunk = images[start : start + batch_size]
-            px_batch, mask_batch = [], []
-            for img in chunk:
-                tiles = dynamic_tile(
-                    img.convert("RGB"),
-                    min_num=cfg.tile_min_num,
-                    max_num=cfg.tile_max_num,
-                    image_size=cfg.image_size,
-                    use_thumbnail=cfg.tile_use_thumbnail,
-                )[: cfg.tile_max_total]
-                px = processor(images=tiles, return_tensors="pt")["pixel_values"]
-                padded = torch.zeros(cfg.tile_max_total, 3, cfg.image_size, cfg.image_size, dtype=px.dtype)
-                padded[: px.size(0)] = px
-                m = torch.zeros(cfg.tile_max_total, dtype=torch.bool)
-                m[: px.size(0)] = True
-                px_batch.append(padded)
-                mask_batch.append(m)
-            emb = self(
-                pixel_values=torch.stack(px_batch).to(device),
-                tile_mask=torch.stack(mask_batch).to(device),
-            ).embedding
+            batch = processor(images=images[start : start + batch_size], return_tensors="pt")
+            emb = self(**{k: v.to(device) for k, v in batch.items()}).embedding
             out.append(emb.float().cpu())
         return torch.cat(out, dim=0)
 

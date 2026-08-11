@@ -124,22 +124,29 @@ pip install -e .          # add [train] or [eval] for the optional extras
 ## Quick start
 
 Every released checkpoint also runs straight from the Hub, with no dependency
-on this repository.
+on this repository. Both towers are one call, and it is the same call.
 
 ```python
-from transformers import AutoModel, AutoImageProcessor
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer      # >= 5.4 for the doc tower
 
-# document tower: page image -> one 4096-d vector
-doc = AutoModel.from_pretrained("nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-4096", trust_remote_code=True).eval()
-proc = AutoImageProcessor.from_pretrained("nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-4096", trust_remote_code=True)
-doc_emb = doc.encode(pages, proc, batch_size=4)
-
-# query tower: text -> one vector in the same space
+doc = SentenceTransformer("nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-4096", trust_remote_code=True)
 query = SentenceTransformer("nanovdr/NanoVDR-Q-DistilBERT-Qwen3VL8B-4096-ML")
+
+doc_emb = doc.encode(pages)                                # PIL pages -> (N, 4096)
 q_emb = query.encode(["What was the revenue growth in Q3 2024?"])
 
 scores = q_emb @ doc_emb.T
+```
+
+Through `transformers` instead, which has no version floor and returns the same
+vectors:
+
+```python
+from transformers import AutoModel, AutoImageProcessor
+
+doc = AutoModel.from_pretrained("nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-4096", trust_remote_code=True).eval()
+proc = AutoImageProcessor.from_pretrained("nanovdr/NanoVDR-D-HiRes-Qwen3VL8B-4096", trust_remote_code=True)
+doc_emb = doc.encode(pages, proc, batch_size=4)
 ```
 
 Both sides carry the same teacher and width, `Qwen3VL8B-4096`, so they pair.
@@ -248,12 +255,14 @@ nanovdr/
 ├── towers/
 │   ├── query.py        text -> single vector or token set
 │   ├── doc.py          page image -> single vector
-│   └── modeling_doc.py standalone definition, also shipped inside every
-│                       Hub checkpoint and loaded by trust_remote_code
+│   ├── modeling_doc.py   standalone definition, also shipped inside every
+│   │                     Hub checkpoint and loaded by trust_remote_code
+│   └── processing_doc.py standalone image processor, likewise shipped; the
+│                         one home for page tiling
 ├── heads.py          SingleVectorHead / MultiVectorHead
 ├── teacher.py        one-off target precomputation  (nanovdr-cache)
 ├── data.py           mixtures of datasets paired with cached targets
-├── tiling.py         aspect-ratio-matched page tiling
+├── tiling.py         re-export of the tiling rule from processing_doc
 ├── scoring.py        dot product | MaxSim, dispatched on geometry
 ├── evaluation.py     ViDoRe scoring and deployment profiling  (nanovdr-eval)
 ├── config.py         YAML loading with ${VAR} expansion
@@ -263,8 +272,15 @@ nanovdr/
     └── query.py        entry point
 configs/              the four released recipes
 packaging/            training checkpoint -> Hub package, and its verifier
-tests/                objective registry tests, no GPU or network needed
+tests/                objective registry and preprocessing tests, no GPU needed
 ```
+
+A page does not reach the model as one 448px view. It is cut into
+aspect-ratio-matched tiles plus a thumbnail, zero-padded to a fixed budget and
+paired with a mask, and that rule lives in `processing_doc.py` alone so it
+cannot drift between training, evaluation and release. `tests/test_processing.py`
+asserts the processor is bit-identical to the preprocessing the released weights
+were trained on, across five page aspect ratios.
 
 `packaging/verify_doc_package.py` is how we established that the released
 weights reproduce our internal evaluation:
