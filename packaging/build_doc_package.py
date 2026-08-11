@@ -19,9 +19,9 @@ from pathlib import Path
 import torch
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / "nanovdr" / "towers"))
 
-from modeling_nanovdr_doc import NanoVDRDocConfig, NanoVDRDocModel  # noqa: E402
+from modeling_doc import NanoVDRDocConfig, NanoVDRDocModel  # noqa: E402
 
 
 def main() -> int:
@@ -74,7 +74,8 @@ def main() -> int:
 
     model = model.float().eval()
     model.save_pretrained(out, safe_serialization=True)
-    shutil.copy(HERE / "modeling_nanovdr_doc.py", out / "modeling_nanovdr_doc.py")
+    shutil.copy(HERE.parent / "nanovdr" / "towers" / "modeling_doc.py",
+                out / "modeling_nanovdr_doc.py")
 
     # image processor: the visual encoder's own, so preprocessing matches training
     from transformers import AutoImageProcessor

@@ -36,8 +36,16 @@ Multi-vector output is supported on the query side only. A single-vector
 objective is the one-atom special case of the multi-vector one, so both are
 entries in the same registry (`nanovdr/align/`) rather than separate codepaths.
 
-<!-- TODO: architecture figure — reuse figs/arch.tex from the DistilVDR paper,
-     redrawn to show the two towers as swappable modules rather than one system. -->
+```
+                       frozen teacher (Qwen3-VL-Embedding)
+                        /                            \
+              target vector                      target vector
+                    |                                  |
+              [ doc tower ]                      [ query tower ]
+              page image                         text query
+                    \__________ dot product / MaxSim _______/
+                          (teacher discarded at deployment)
+```
 
 ### Configuration axes
 
@@ -93,10 +101,16 @@ per page.**
 
 ---
 
+## Install
+
+```bash
+pip install -e .          # add [train] or [eval] for the optional extras
+```
+
 ## Quick start
 
-Every released checkpoint runs from the Hub today, with no dependency on this
-repository.
+Every released checkpoint also runs straight from the Hub, with no dependency
+on this repository.
 
 ```python
 from transformers import AutoModel, AutoImageProcessor
@@ -123,32 +137,32 @@ ships with it.
 
 ## Training
 
-> **Not in this repository yet.** The training and evaluation code is being
-> ported from the research tree into the layout below; the interface is fixed
-> but the modules have not landed. What follows is the shape it will take.
-
 All three training entry points read the same config schema and differ only in
 which tower they instantiate.
 
 ```bash
 # query tower, single vector
-python -m nanovdr.train.query --config configs/query/distilbert_2b.yaml
+python -m nanovdr.train.query --config configs/query/distilbert_8b.yaml
 
-# query tower, multi vector
-python -m nanovdr.train.query --config configs/query/distilbert_2b_ot.yaml
+# query tower, multi vector (late interaction)
+python -m nanovdr.train.query --config configs/query/distilbert_8b_ot.yaml
 
-# doc tower, single vector
+# document tower
 torchrun --nproc_per_node=2 -m nanovdr.train.doc --config configs/doc/hires_8b.yaml
 ```
 
-Teacher targets are cached before training and reused across every run:
+Teacher targets are cached once beforehand and reused by every run, which is
+what lets the two towers train in parallel:
 
 ```bash
-python -m nanovdr.teacher.cache --teacher qwen3-vl-embedding-8b --split train
+nanovdr-cache --data $DATA_ROOT/base_711k --out $CACHE_ROOT/teacher_8b/base_711k.h5 --kind image
+nanovdr-cache --data $DATA_ROOT/queries   --out $CACHE_ROOT/teacher_8b/queries.h5   --kind query
 ```
 
-<!-- TODO: state the one-off cost here. Measured for the 8B teacher over the
-     1.20M-image / 1.49M-query mixture: 99.5 H200-GPU-hours total. -->
+Caching the 1.20M-image and 1.49M-query mixture against the 8B teacher took
+99.5 H200-GPU-hours in total. It is a one-time cost: every checkpoint and
+every ablation in the paper reuses the same cache, and the teacher is never
+loaded during student training.
 
 ### Alignment objectives
 
@@ -177,17 +191,21 @@ Registering a new objective is one decorator; nothing else changes.
 
 ## Evaluation harness
 
-> **Not in this repository yet**, same as above.
-
 `eval/` reproduces **twelve publicly released retrievers plus the teacher**
 under one protocol: same evaluation driver, same input formatting, same
 deduplication, same metric code. It reports retrieval quality *and* deployment
 cost side by side.
 
 ```bash
-python -m nanovdr.eval.vidore     --model <hf-id> --benchmarks v1 v2 v3
-python -m nanovdr.eval.baselines  --all
-python -m nanovdr.eval.efficiency --model <hf-id> --batch-size 8
+nanovdr-eval --doc-model nanovdr/NanoVDR-D-HiRes \
+             --teacher-cache $CACHE_ROOT/teacher_8b/eval \
+             --benchmarks v1 v2 v3 --out results.json
+```
+
+```python
+from nanovdr.evaluation import profile_model
+profile_model(doc_tower, pages, batch_size=8)
+# {'pages_per_second': 36.82, 'peak_vram_gb': 3.07, 'index_gb_per_million': 16.4, ...}
 ```
 
 Measured per model: NDCG@5 on ViDoRe v1/v2/v3, query latency, document
@@ -200,32 +218,42 @@ released chat-template path with `use_cache=False` for DSE-Qwen2, the native
 flash-attention path for InternViT, and so on. If you only take one thing from
 this repository, take this.
 
-<!-- TODO: publish the raw result JSON as a dataset repo
-     (nanovdr/vdr-benchmark-results) so the numbers are citable without
-     rerunning anything. -->
+`nanovdr-eval` writes per-dataset JSON, so a reported number can be traced to
+the dataset it came from without rerunning the sweep.
 
 ---
 
 ## Repository layout
 
-What has landed:
-
 ```
-nanovdr/align/registry.py    the alignment-objective interface both towers share
-packaging/                   the doc-tower release tooling, used for the two
-                             checkpoints on the Hub:
-  modeling_nanovdr_doc.py      standalone model definition (this is what
-                               trust_remote_code loads from the Hub)
-  build_doc_package.py         training checkpoint -> Hub-ready package
-  verify_doc_package.py        loads a package and checks it against cached
-                               teacher embeddings on a real ViDoRe corpus
+nanovdr/
+├── align/            the objective registry; the only place the method varies
+│   ├── registry.py     Repr, AlignLoss, get_align_loss
+│   ├── single.py       cosine
+│   └── multi.py        ot (Sinkhorn), chamfer, coverage
+├── towers/
+│   ├── query.py        text -> single vector or token set
+│   ├── doc.py          page image -> single vector
+│   └── modeling_doc.py standalone definition, also shipped inside every
+│                       Hub checkpoint and loaded by trust_remote_code
+├── heads.py          SingleVectorHead / MultiVectorHead
+├── teacher.py        one-off target precomputation  (nanovdr-cache)
+├── data.py           mixtures of datasets paired with cached targets
+├── tiling.py         aspect-ratio-matched page tiling
+├── scoring.py        dot product | MaxSim, dispatched on geometry
+├── evaluation.py     ViDoRe scoring and deployment profiling  (nanovdr-eval)
+├── config.py         YAML loading with ${VAR} expansion
+└── train/
+    ├── engine.py       the loop, shared by both towers
+    ├── doc.py          entry point
+    └── query.py        entry point
+configs/              the four released recipes
+packaging/            training checkpoint -> Hub package, and its verifier
+tests/                objective registry tests, no GPU or network needed
 ```
 
-Landing next: `nanovdr/towers/`, `heads.py`, `teacher/cache.py`, `tiling.py`,
-`scoring.py`, the `cosine` and `ot` objectives, `train/`, `eval/`, `configs/`.
-
-The packaging tooling is not decorative. `verify_doc_package.py` is how we
-established that the released weights reproduce our internal evaluation:
+`packaging/verify_doc_package.py` is how we established that the released
+weights reproduce our internal evaluation:
 
 ```
 500 pages of ViDoRe arxivqa, NanoVDR-D-HiRes

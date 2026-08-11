@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanovdr"
+version = "0.1.0"
+description = "Small retrievers for visual documents, trained by aligning directly to a frozen VLM's embedding space"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = ["visual document retrieval", "distillation", "multimodal embeddings", "document ai"]
+classifiers = [
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "torch>=2.1",
+  "transformers>=4.48",
+  "datasets>=2.16",
+  "h5py>=3.8",
+  "numpy>=1.24",
+  "pillow>=9.0",
+  "pyyaml>=6.0",
+  "timm>=0.9",            # required by InternViT's remote code
+  "einops>=0.7",          # ditto
+]
+
+[project.optional-dependencies]
+train = ["accelerate>=0.26", "tqdm>=4.65"]
+eval = ["sentence-transformers>=3.0"]
+dev = ["pytest>=7.4"]
+
+[project.urls]
+Homepage = "https://github.com/Ryenhails/NanoVDR"
+Models = "https://huggingface.co/nanovdr"
+
+[project.scripts]
+nanovdr-cache = "nanovdr.teacher:main"
+nanovdr-eval = "nanovdr.evaluation:main"
+
+[tool.setuptools.packages.find]
+include = ["nanovdr*"]
