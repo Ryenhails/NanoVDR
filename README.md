@@ -5,7 +5,8 @@
 <h3 align="center">Small retrievers for visual documents,<br>trained by aligning directly to a frozen VLM's embedding space</h3>
 
 <p align="center">
-  <a href="https://arxiv.org/abs/2603.12824"><img src="https://img.shields.io/badge/arXiv-2603.12824-b31b1b.svg?style=for-the-badge" alt="arXiv"></a>
+  <a href="https://arxiv.org/abs/2603.12824"><img src="https://img.shields.io/badge/NanoVDR-arXiv%202603.12824-b31b1b?style=for-the-badge" alt="NanoVDR paper"></a>
+  <a href="https://arxiv.org/abs/2608.10636"><img src="https://img.shields.io/badge/DistilVDR-arXiv%202608.10636-b31b1b?style=for-the-badge" alt="DistilVDR paper"></a>
   <a href="https://huggingface.co/nanovdr"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Models-nanovdr-FFD21E?style=for-the-badge" alt="Hugging Face"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License"></a>
 </p>
@@ -350,6 +351,13 @@ the name. The old links redirect and each model card records its former name.
   year    = {2026}
 }
 ```
+
+## Acknowledgements
+
+This repository was built in collaboration with
+[Claude](https://claude.com/claude-code) (Anthropic): the package structure, the
+packaging and verification tooling, the test suite, and the documentation. The
+experiments, the results, and every number reported here are our own.
 
 ## License
 
