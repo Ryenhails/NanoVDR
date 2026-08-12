@@ -325,7 +325,7 @@ NDCG@5  teacher queries x student pages : 83.07   (95.6% retention)
 | | What | Where |
 |---|---|---|
 | **NanoVDR** | The main line: a 70M text-only query tower distilled from a 2B teacher. | [arXiv:2603.12824](https://arxiv.org/abs/2603.12824) · [blog](https://huggingface.co/blog/Ryenhails/nanovdr) |
-| **DistilVDR** | The branch: adds the document tower, so both sides are students and the teacher is gone at deployment. | preprint on arXiv, identifier being added here as soon as it is announced · [write-up](https://huggingface.co/spaces/nanovdr/distilling-the-document-tower) |
+| **DistilVDR** | The branch: adds the document tower, so both sides are students and the teacher is gone at deployment. | [arXiv:2608.10636](https://arxiv.org/abs/2608.10636) · [write-up](https://huggingface.co/spaces/nanovdr/distilling-the-document-tower) |
 | **NanoVDR-v2** | Multi-vector query towers. 🚧 Under construction. | |
 
 Every model was renamed on 2026-08-11 to make the pairing rule readable from
@@ -346,7 +346,7 @@ the name. The old links redirect and each model card records its former name.
   title   = {DistilVDR: A Compact End-to-End Visual Document Retriever
              via Dual-Student Distillation},
   author  = {Liu, Zhuchenyang and Wang, Ziyi and Zhang, Yao and Xiao, Yu},
-  journal = {arXiv preprint},
+  journal = {arXiv preprint arXiv:2608.10636},
   year    = {2026}
 }
 ```
