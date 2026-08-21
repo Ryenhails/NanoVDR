@@ -6,7 +6,6 @@
 
 <p align="center">
   <a href="https://arxiv.org/abs/2603.12824"><img src="https://img.shields.io/badge/NanoVDR-arXiv%202603.12824-b31b1b?style=for-the-badge" alt="NanoVDR paper"></a>
-  <a href="https://arxiv.org/abs/2603.12824"><img src="https://img.shields.io/badge/NanoVDR-EMNLP%202026%20Main-4c1?style=for-the-badge" alt="NanoVDR at EMNLP 2026"></a>
   <a href="https://arxiv.org/abs/2608.10636"><img src="https://img.shields.io/badge/DistilVDR-arXiv%202608.10636-b31b1b?style=for-the-badge" alt="DistilVDR paper"></a>
   <a href="https://huggingface.co/nanovdr"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Models-nanovdr-FFD21E?style=for-the-badge" alt="Hugging Face"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License"></a>
