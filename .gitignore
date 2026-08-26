@@ -9,3 +9,4 @@ hf/*.log
 *.h5
 .DS_Store
 hf/
+camera-ready/
