@@ -35,10 +35,10 @@ VIDORE = {
         "syntheticDocQA_health": "vidore/syntheticDocQA_healthcare_industry_test",
     },
     "v2": {
-        "esg_reports": "vidore/restricted_esg_reports_beir",
-        "biomedical_lectures": "vidore/biomedical_lectures_v2_multilingual_beir",
-        "economics_reports": "vidore/economics_reports_v2_multilingual_beir",
-        "esg_reports_human": "vidore/esg_reports_human_labeled_v2_beir",
+        "esg_reports": "vidore/esg_reports_v2",
+        "biomedical_lectures": "vidore/biomedical_lectures_v2",
+        "economics_reports": "vidore/economics_reports_v2",
+        "esg_reports_human": "vidore/esg_reports_human_labeled_v2",
     },
     "v3": {
         "finance_en": "vidore/vidore_v3_finance_en",
@@ -141,7 +141,7 @@ def main() -> int:
     args = ap.parse_args()
 
     import h5py
-    from datasets import load_dataset
+    from datasets import get_dataset_config_names, load_dataset
 
     from .towers import DocTower
 
@@ -173,7 +173,12 @@ def main() -> int:
                 if r.get("score", 1) > 0:
                     qrels[qid2i[r["query-id"]]].append(cid2i[r["corpus-id"]])
 
-            ds = load_dataset(hub_id, split="test")
+            # v1 ships one flat table; v2 and v3 split corpus/queries/qrels into
+            # separate configs, and loading those without naming one either fails
+            # or silently hands back the query table instead of the pages.
+            configs = get_dataset_config_names(hub_id)
+            ds = load_dataset(hub_id, "corpus" if "corpus" in configs else None,
+                              split="test")
             col = "image" if "image" in ds.column_names else ds.column_names[0]
             seen, pages = set(), []
             for i in range(len(ds)):
