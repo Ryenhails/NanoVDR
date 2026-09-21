@@ -38,17 +38,23 @@ class SingleVectorHead(nn.Module):
 class MultiVectorHead(nn.Module):
     """Per-token states -> a set of L2-normalised vectors.
 
-    With ``learn_weights`` the head also emits one logit per token. Those
-    become the student marginal in the weighted transport objective, letting a
-    token carry more mass when the student has fewer atoms than the teacher. At
-    retrieval time the tokens must then be scaled by the same softmax weights
-    before MaxSim.
+    The projection is bias-free. A per-token bias survives L2 normalisation as
+    a fixed direction every token is pulled towards, which is exactly the
+    collapse balanced transport is there to prevent; the released ColNanoVDR
+    towers are all trained and packaged without it.
+
+    With ``learn_weights`` the head also emits one logit per token, taken from
+    the pre-projection hidden state. Those become the student marginal in the
+    weighted transport objective, letting a token carry more mass when the
+    student has fewer atoms than the teacher. At retrieval time the tokens must
+    then be scaled by the same softmax weights before MaxSim; ``QueryTower``
+    does that for you.
     """
 
     def __init__(self, hidden: int, embed_dim: int, learn_weights: bool = False):
         super().__init__()
         self.embed_dim = embed_dim
-        self.proj = nn.Linear(hidden, embed_dim)
+        self.proj = nn.Linear(hidden, embed_dim, bias=False)
         self.weight_head = nn.Linear(hidden, 1) if learn_weights else None
 
     def forward(self, hidden: torch.Tensor, mask: torch.Tensor) -> Repr:

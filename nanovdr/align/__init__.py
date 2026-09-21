@@ -14,7 +14,7 @@ from .registry import (  # noqa: F401
     register_align_loss,
 )
 from . import single as _single  # noqa: F401,E402  (registers "cosine")
-from . import multi as _multi    # noqa: F401,E402  (registers "ot", "chamfer", "coverage")
+from . import multi as _multi    # noqa: F401,E402  (registers "ot")
 
 __all__ = [
     "AlignLoss",

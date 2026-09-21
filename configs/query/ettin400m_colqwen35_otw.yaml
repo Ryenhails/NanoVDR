@@ -1,0 +1,53 @@
+# ColNanoVDR-Q-Ettin400M-ColQwen35-320-ML
+#
+# Multi-vector query tower distilled, document-free, into the late-interaction
+# space of a ColPali-style teacher. Only the teacher's cached *query* token
+# embeddings are consumed: no page image is ever encoded and no relevance label
+# is ever used.
+#
+# To target a different teacher, change `embed_dim` to its width and point
+# `sources` at that teacher's cache. The released towers are:
+#
+#   colqwen35  athrael-soju/colqwen3.5-4.5B-v3          320
+#   vultron    vultr/VultronRetrieverCore-Qwen3.5-4.5B  320
+#   tomoro8b   TomoroAI/tomoro-colqwen3-embed-8b        320
+#   colvec4b   webAI-Official/webAI-ColVec1.1-4b        640
+#   colvec8b   webAI-Official/webAI-ColVec1.1-8b        640
+#
+# Cache the targets first:
+#   python -m nanovdr.teacher --data $DATA_ROOT/queries_combined \
+#       --out $CACHE_ROOT/colqwen35/queries_combined.h5 \
+#       --kind query_tokens --teacher colqwen35
+
+backbone:      jhu-clsp/ettin-encoder-400m
+embed_dim:     320
+geometry:      multi
+max_length:    512
+learn_weights: true            # required by the weighted marginal below
+
+# No instruction prefix. The instruction is applied when the *teacher* targets
+# are cached; the student learns to reproduce that token set from the raw query
+# text, and prepending anything here would move its input off-distribution.
+instruction: null
+
+align: ot
+align_kwargs:
+  eps:      0.05
+  n_iter:   50
+  weighted: true               # student marginal = softmax over learned per-token logits
+
+sources:
+  - path:    ${DATA_ROOT}/queries_combined
+    targets: ${CACHE_ROOT}/colqwen35/queries_combined.h5
+val_sources:
+  - path:    ${DATA_ROOT}/queries_val
+    targets: ${CACHE_ROOT}/colqwen35/queries_val.h5
+
+batch_size:  128
+grad_accum:  4                 # effective batch 512
+epochs:      10
+peak_lr:     3.0e-4
+warmup_pct:  0.03
+num_workers: 8
+seed:        42
+output_dir:  outputs/colnanovdr-q-ettin400m-colqwen35-320

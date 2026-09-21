@@ -43,6 +43,15 @@ class QueryTower(nn.Module):
     learn_weights : bool
         Multi-vector only. Emit a per-token weight logit alongside each vector,
         consumed by the weighted-marginal variant of the transport objective.
+        ``encode`` then folds the softmax weights into the returned vectors, so
+        what comes out is what MaxSim should score.
+
+    Notes
+    -----
+    A multi-vector tower drops ``[CLS]``, ``[SEP]`` and padding from its token
+    set. Those positions carry no query content, and letting them into the
+    measure gives transport somewhere cheap to put mass. Training and retrieval
+    use the same mask, so the two cannot drift.
     """
 
     def __init__(
@@ -83,7 +92,7 @@ class QueryTower(nn.Module):
         hidden = self.backbone(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
 
         if self.geometry == "multi":
-            return self.head(hidden, attention_mask.bool())
+            return self.head(hidden, self.scoring_mask(input_ids, attention_mask))
 
         if self.pool_type == "eos":
             idx = attention_mask.sum(dim=1).long() - 1
@@ -92,6 +101,15 @@ class QueryTower(nn.Module):
             m = attention_mask.unsqueeze(-1).float()
             pooled = (hidden * m).sum(dim=1) / m.sum(dim=1).clamp(min=1)
         return self.head(pooled)
+
+    def scoring_mask(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        """Which positions are real query tokens: not padding, not a special token."""
+        mask = attention_mask.bool()
+        tok = self.tokenizer
+        for sid in (tok.cls_token_id, tok.sep_token_id, tok.pad_token_id):
+            if sid is not None:
+                mask = mask & (input_ids != sid)
+        return mask
 
     def tokenize(self, queries: Sequence[str], device=None) -> dict[str, torch.Tensor]:
         if self.instruction:
@@ -115,7 +133,11 @@ class QueryTower(nn.Module):
         device=None,
     ) -> Union[torch.Tensor, list[torch.Tensor]]:
         """Encode queries. Returns (N, D) for a single-vector tower, or a list
-        of (K_i, D) token sets for a multi-vector one."""
+        of (K_i, D) token sets for a multi-vector one.
+
+        On a weighted multi-vector tower the learned softmax weights are folded
+        into the vectors here, so the per-query token norms sum to 1 and the
+        output is scored by plain MaxSim. Do not re-normalise it."""
         if isinstance(queries, str):
             queries = [queries]
         device = device or next(self.parameters()).device
@@ -129,7 +151,13 @@ class QueryTower(nn.Module):
                 vecs.append(rep.vec.float().cpu())
             else:
                 toks, mask = rep.tokens.float().cpu(), rep.mask.cpu()
-                sets.extend(toks[i][mask[i]] for i in range(toks.size(0)))
+                logits = rep.weights.float().cpu() if rep.weights is not None else None
+                for i in range(toks.size(0)):
+                    tk = toks[i][mask[i]]
+                    if logits is not None:
+                        w = torch.softmax(logits[i][mask[i]], dim=0)
+                        tk = tk * w.unsqueeze(-1)
+                    sets.append(tk)
         return torch.cat(vecs, dim=0) if vecs else sets
 
     # -- persistence -------------------------------------------------------
@@ -146,6 +174,9 @@ class QueryTower(nn.Module):
                 {
                     "geometry": self.geometry,
                     "pool_type": self.pool_type,
+                    "learn_weights": self.head.weight_head is not None
+                    if self.geometry == "multi"
+                    else False,
                     "embed_dim": self.embed_dim,
                     "instruction": self.instruction,
                     "max_length": self.max_length,

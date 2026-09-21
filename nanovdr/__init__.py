@@ -25,7 +25,7 @@ from .align import (  # noqa: F401
     register_align_loss,
 )
 from .heads import MultiVectorHead, SingleVectorHead  # noqa: F401
-from .scoring import dot_product, maxsim, score  # noqa: F401
+from .scoring import dot_product, maxsim, mean_maxsim, score  # noqa: F401
 from .tiling import dynamic_tile  # noqa: F401
 from .towers import DocTower, QueryTower  # noqa: F401
 
@@ -46,6 +46,7 @@ __all__ = [
     "score",
     "dot_product",
     "maxsim",
+    "mean_maxsim",
     "dynamic_tile",
     "__version__",
 ]

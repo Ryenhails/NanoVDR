@@ -12,9 +12,9 @@ def _unit(*shape):
 
 
 def test_registry_contents():
-    assert set(available_align_losses()) == {"cosine", "ot", "chamfer", "coverage"}
+    assert set(available_align_losses()) == {"cosine", "ot"}
     assert available_align_losses("single") == ["cosine"]
-    assert set(available_align_losses("multi")) == {"ot", "chamfer", "coverage"}
+    assert available_align_losses("multi") == ["ot"]
 
 
 def test_cosine_is_zero_at_the_optimum():
@@ -23,7 +23,7 @@ def test_cosine_is_zero_at_the_optimum():
     assert out["loss"].abs() < 1e-6
 
 
-@pytest.mark.parametrize("name", ["ot", "chamfer", "coverage"])
+@pytest.mark.parametrize("name", ["ot"])
 def test_multi_objectives_are_lower_on_identical_sets(name):
     """Every set discrepancy must prefer a matching measure to a random one."""
     s, mask = _unit(2, 6, 32), torch.ones(2, 6, dtype=torch.bool)
@@ -33,7 +33,7 @@ def test_multi_objectives_are_lower_on_identical_sets(name):
     assert same < other
 
 
-@pytest.mark.parametrize("name", ["cosine", "ot", "chamfer", "coverage"])
+@pytest.mark.parametrize("name", ["cosine", "ot"])
 def test_gradients_reach_the_student(name):
     geometry = "single" if name == "cosine" else "multi"
     if geometry == "single":
@@ -55,7 +55,7 @@ def test_masked_teacher_tokens_are_ignored():
     full = torch.ones(1, 6, dtype=torch.bool)
     padded = torch.cat([t, _unit(1, 3, 16)], dim=1)
     part = torch.cat([full, torch.zeros(1, 3, dtype=torch.bool)], dim=1)
-    loss = get_align_loss("chamfer", geometry="multi")
+    loss = get_align_loss("ot", geometry="multi")
     a = loss(Repr(tokens=s, mask=sm), Repr(tokens=t, mask=full))["loss"]
     b = loss(Repr(tokens=s, mask=sm), Repr(tokens=padded, mask=part))["loss"]
     assert torch.allclose(a, b, atol=1e-5)
@@ -78,3 +78,30 @@ def test_repr_rejects_ambiguous_construction():
         Repr(vec=_unit(1, 4), tokens=_unit(1, 2, 4), mask=torch.ones(1, 2, dtype=torch.bool))
     with pytest.raises(ValueError):
         Repr(tokens=_unit(1, 2, 4))          # missing mask
+
+
+def test_weighted_marginal_uses_the_student_logits():
+    """The `weighted` variant must actually consume Repr.weights, otherwise the
+    learned weight head would train against nothing."""
+    s = _unit(2, 5, 16)
+    t = _unit(2, 7, 16)
+    sm = torch.ones(2, 5, dtype=torch.bool)
+    tm = torch.ones(2, 7, dtype=torch.bool)
+    loss = get_align_loss("ot", geometry="multi", weighted=True)
+    flat = loss(Repr(tokens=s, mask=sm, weights=torch.zeros(2, 5)), Repr(tokens=t, mask=tm))["loss"]
+    peaked = loss(
+        Repr(tokens=s, mask=sm, weights=torch.tensor([[6.0, 0, 0, 0, 0]] * 2)),
+        Repr(tokens=t, mask=tm),
+    )["loss"]
+    assert not torch.isclose(flat, peaked)
+
+
+def test_weight_logits_receive_gradient():
+    s = _unit(2, 5, 16)
+    w = torch.zeros(2, 5, requires_grad=True)
+    loss = get_align_loss("ot", geometry="multi", weighted=True)
+    loss(
+        Repr(tokens=s, mask=torch.ones(2, 5, dtype=torch.bool), weights=w),
+        Repr(tokens=_unit(2, 7, 16), mask=torch.ones(2, 7, dtype=torch.bool)),
+    )["loss"].backward()
+    assert w.grad is not None and torch.isfinite(w.grad).all() and w.grad.abs().sum() > 0

@@ -10,14 +10,14 @@ measures rather than between two points.
 
 The single-vector cosine objective is the one-atom case of exactly this.
 
-Entropic optimal transport (``ot``) is the default. Chamfer and its one-sided
-relaxation are kept because they are the ablations that motivate it: coverage
-alone leaves dead student tokens, and adding precision collapses the student
-onto a few teacher atoms. Balanced transport removes both failure modes by
-enforcing the marginals on each side.
+Entropic optimal transport is the objective the released ColNanoVDR towers are
+trained with. Enforcing both marginals is what makes it behave: every student
+token must carry its mass, so none goes dead, and the student has to spread to
+match the teacher's measure rather than collapsing onto a few easy atoms.
 
-None of these objectives touches documents. Query-side token sets and their
-cached teacher targets are all they consume.
+The objective never touches documents. Query-side token sets and their cached
+teacher targets are all it consumes, which is what makes the distillation
+document-free.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ import torch.nn as nn
 
 from .registry import AlignLoss, Repr, register_align_loss
 
-__all__ = ["SinkhornOTAlignLoss", "ChamferAlignLoss", "CoverageAlignLoss", "sinkhorn_log"]
+__all__ = ["SinkhornOTAlignLoss", "sinkhorn_log"]
 
 
 def sinkhorn_log(
@@ -147,69 +147,3 @@ class SinkhornOTAlignLoss(AlignLoss):
         else:
             out["loss"] = cost.mean()
         return out
-
-
-@register_align_loss(
-    "chamfer",
-    geometry="multi",
-    summary="bidirectional Chamfer distance between the two token sets (ablation)",
-)
-class ChamferAlignLoss(AlignLoss):
-    """Bidirectional Chamfer distance between the token sets.
-
-        coverage  = mean_j [ 1 - max_i <s_i, t_j> ]   every teacher token covered
-        precision = mean_i [ 1 - max_j <s_i, t_j> ]   every student token grounded
-
-    Unlike score-based objectives, whose gradient flows only through an
-    aggregated argmax, this gives dense per-token supervision. It is kept as an
-    ablation: adding the precision side collapses the student, which is the
-    failure balanced transport avoids.
-
-    ``direction`` is one of ``"both"``, ``"coverage"``, ``"precision"``.
-    """
-
-    def __init__(self, direction: str = "both"):
-        super().__init__()
-        if direction not in ("both", "coverage", "precision"):
-            raise ValueError(f"direction must be both/coverage/precision, got {direction!r}")
-        self.direction = direction
-
-    def compute(self, student: Repr, teacher: Repr) -> dict[str, torch.Tensor]:
-        s, sm, t, tm = student.tokens, student.mask, teacher.tokens, teacher.mask
-        sim = torch.einsum("bid,bjd->bij", s.float(), t.float())
-        pair = sm.unsqueeze(2) & tm.unsqueeze(1)
-        neg_inf = torch.finfo(torch.float32).min
-        sim_m = sim.masked_fill(~pair, neg_inf)
-
-        out: dict[str, torch.Tensor] = {}
-        terms = []
-        if self.direction in ("both", "coverage"):
-            best_per_teacher = sim_m.max(dim=1).values                      # (B, Kt)
-            cov = (1.0 - best_per_teacher).masked_fill(~tm, 0.0).sum(1) / tm.sum(1).clamp(min=1)
-            out["coverage"] = cov.mean().detach()
-            terms.append(cov)
-        if self.direction in ("both", "precision"):
-            best_per_student = sim_m.max(dim=2).values                      # (B, Ks)
-            prec = (1.0 - best_per_student).masked_fill(~sm, 0.0).sum(1) / sm.sum(1).clamp(min=1)
-            out["precision"] = prec.mean().detach()
-            terms.append(prec)
-
-        out["loss"] = torch.stack(terms, dim=0).mean(0).mean()
-        return out
-
-
-@register_align_loss(
-    "coverage",
-    geometry="multi",
-    summary="one-sided Chamfer: every teacher token must be covered (ablation)",
-)
-class CoverageAlignLoss(ChamferAlignLoss):
-    """One-sided relaxation of transport: cover the teacher, ignore precision.
-
-    Cheaper than OT and a reasonable first thing to try, but it leaves student
-    tokens that no teacher token pulls on, so they drift. Kept as the ablation
-    that motivates balanced transport.
-    """
-
-    def __init__(self):
-        super().__init__(direction="coverage")

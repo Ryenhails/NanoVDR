@@ -62,12 +62,22 @@ def setup_distributed() -> tuple[int, int, int]:
     return rank, world, local
 
 
-def _target_repr(target: torch.Tensor, geometry: str) -> Repr:
-    """Wrap a cached teacher target, L2-normalising it as the losses expect."""
+def _target_repr(
+    target: torch.Tensor,
+    geometry: str,
+    mask: torch.Tensor | None = None,
+) -> Repr:
+    """Wrap a cached teacher target, L2-normalising it as the losses expect.
+
+    ``mask`` comes from a ragged multi-vector collate, which right-pads token
+    sets of different lengths. Without it every padded row would count as a
+    teacher atom and the transport marginals would be wrong.
+    """
     if geometry == "single":
         return Repr(vec=F.normalize(target, p=2, dim=-1))
     tokens = F.normalize(target, p=2, dim=-1)
-    mask = torch.ones(tokens.shape[:2], dtype=torch.bool, device=tokens.device)
+    if mask is None:
+        mask = torch.ones(tokens.shape[:2], dtype=torch.bool, device=tokens.device)
     return Repr(tokens=tokens, mask=mask)
 
 
@@ -143,10 +153,13 @@ def train(
 
         for it, batch in enumerate(loader):
             target = batch.pop("target").to(device, non_blocking=True)
+            tmask = batch.pop("target_mask", None)
+            if tmask is not None:
+                tmask = tmask.to(device, non_blocking=True)
             batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
             with torch.autocast("cuda", dtype=amp, enabled=amp is not None):
                 student = forward_fn(tower, batch)
-                out = loss_fn(student, _target_repr(target, geometry))
+                out = loss_fn(student, _target_repr(target, geometry, tmask))
                 loss = out["loss"] / cfg.grad_accum
             scaler.scale(loss).backward()
 
@@ -212,9 +225,12 @@ def evaluate(core, dataset, collate_fn, loss_fn, cfg, forward_fn, device, geomet
     total, seen = 0.0, 0
     for batch in loader:
         target = batch.pop("target").to(device)
+        tmask = batch.pop("target_mask", None)
+        if tmask is not None:
+            tmask = tmask.to(device)
         batch = {k: v.to(device) for k, v in batch.items()}
         student = forward_fn(core, batch)
-        out = loss_fn(student, _target_repr(target, geometry))
+        out = loss_fn(student, _target_repr(target, geometry, tmask))
         total += float(out["loss"]) * target.size(0)
         seen += target.size(0)
     core.train()

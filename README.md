@@ -82,6 +82,28 @@ under query-side isolation and is not comparable to them. Latency is one query
 on one CPU thread including tokenisation, and tracks the backbone: the width of
 the output head is marginal beside it.</sub>
 
+### Multi-vector query towers (ColNanoVDR)
+
+Text in, a *set* of vectors in a late-interaction teacher's space out. These
+replace the query side of a ColPali-style retriever, so an existing multi-vector
+page index is scored by MaxSim unchanged and no vision-language model runs at
+query time. Distillation is document-free: only the teacher's cached query token
+embeddings are consumed, never a page image and never a relevance label.
+
+| Model | Params | Teacher | Width | v1 | v2 | v3 | Retention | Comments |
+|---|---|---|---|---|---|---|---|---|
+| [ColNanoVDR-Q-Ettin400M-ColQwen35-320-ML](https://huggingface.co/nanovdr/ColNanoVDR-Q-Ettin400M-ColQwen35-320-ML) | 395M | ColQwen3.5-4.5B | 320 | 91.16 | 62.08 | 56.65 | **98.1%** | • Ettin-400M.<br />• Highest retention of the family. |
+| [ColNanoVDR-Q-Ettin150M-ColQwen35-320-ML](https://huggingface.co/nanovdr/ColNanoVDR-Q-Ettin150M-ColQwen35-320-ML) ⭐ | 150M | ColQwen3.5-4.5B | 320 | 90.67 | 60.01 | 55.06 | 96.1% | • Ettin-150M.<br />• 30x smaller than its teacher.<br />• Start here. |
+| [ColNanoVDR-Q-Ettin150M-Vultron45B-320-ML](https://huggingface.co/nanovdr/ColNanoVDR-Q-Ettin150M-Vultron45B-320-ML) | 150M | Vultron-4.5B | 320 | 91.28 | 64.96 | 58.30 | 97.3% | • Same recipe, different teacher. |
+| [ColNanoVDR-Q-Ettin150M-Tomoro8B-320-ML](https://huggingface.co/nanovdr/ColNanoVDR-Q-Ettin150M-Tomoro8B-320-ML) | 150M | Tomoro-8B | 320 | 89.95 | 60.61 | 54.87 | 95.7% | • 59x smaller than its teacher. |
+| [ColNanoVDR-Q-Ettin150M-ColVec4B-640-ML](https://huggingface.co/nanovdr/ColNanoVDR-Q-Ettin150M-ColVec4B-640-ML) | 150M | ColVec1.1-4b | 640 | 90.27 | 64.03 | 59.08 | 97.4% | • Non-commercial, inherited from the teacher. |
+| [ColNanoVDR-Q-Ettin150M-ColVec8B-640-ML](https://huggingface.co/nanovdr/ColNanoVDR-Q-Ettin150M-ColVec8B-640-ML) | 150M | ColVec1.1-8b | 640 | 90.86 | 65.37 | 60.10 | 97.5% | • Non-commercial, inherited from the teacher.<br />• Strongest absolute scores. |
+
+<sub>Query side scored in isolation against teacher-encoded pages, which
+attributes all error to the tower. Retention = student / teacher, averaged over
+v1-v3. Rows distilled from different teachers are not comparable to each other.
+These towers load with `MultiVectorEncoder`, not `SentenceTransformer`.</sub>
+
 ### Document towers
 
 Page image in, one vector out. These come from **DistilVDR** and exist to
@@ -193,8 +215,8 @@ instantiate.
 # query tower, single vector
 python -m nanovdr.train.query --config configs/query/distilbert_8b.yaml
 
-# query tower, multi vector (late interaction)
-python -m nanovdr.train.query --config configs/query/distilbert_8b_ot.yaml
+# query tower, multi vector (late interaction, ColNanoVDR)
+python -m nanovdr.train.query --config configs/query/ettin150m_colqwen35_otw.yaml
 
 # document tower
 torchrun --nproc_per_node=2 -m nanovdr.train.doc --config configs/doc/hires_8b.yaml
@@ -206,6 +228,10 @@ what lets the two towers train in parallel:
 ```bash
 nanovdr-cache --data $DATA_ROOT/base_711k --out $CACHE_ROOT/teacher_8b/base_711k.h5 --kind image
 nanovdr-cache --data $DATA_ROOT/queries   --out $CACHE_ROOT/teacher_8b/queries.h5   --kind query
+
+# multi-vector teachers cache query *token sets*, stored ragged
+nanovdr-cache --data $DATA_ROOT/queries --out $CACHE_ROOT/colqwen35/queries.h5 \
+    --kind query_tokens --teacher colqwen35
 ```
 
 Caching the 1.20M-image and 1.49M-query mixture against the 8B teacher took
@@ -222,6 +248,12 @@ registry for both geometries:
 | `cosine` | single | `1 - <s, t>`; the default everywhere on the single-vector side |
 | `ot` | multi | entropic Sinkhorn transport between the two token measures |
 
+With `weighted: true` the student marginal becomes a softmax over per-token
+logits from the tower's weight head instead of a uniform one, which is what the
+released ColNanoVDR towers train with (`OTW`). Those weights are then folded
+into the vectors at encode time, so a plain MaxSim consumer reproduces the
+scoring the tower was fitted under.
+
 Every objective consumes only the student representation and its cached teacher
 target. None of them needs documents, negatives, or relevance labels at training
 time, which is what lets the two towers train independently.
@@ -229,7 +261,7 @@ time, which is what lets the two towers train independently.
 ```python
 from nanovdr.align import get_align_loss, available_align_losses
 
-loss = get_align_loss("ot", geometry="multi", eps=0.05, n_iter=50)
+loss = get_align_loss("ot", geometry="multi", eps=0.05, n_iter=50, weighted=True)
 available_align_losses(geometry="single")   # ['cosine']
 ```
 
@@ -278,7 +310,7 @@ nanovdr/
 ├── align/            the objective registry; the only place the method varies
 │   ├── registry.py     Repr, AlignLoss, get_align_loss
 │   ├── single.py       cosine
-│   └── multi.py        ot (Sinkhorn), chamfer, coverage
+│   └── multi.py        ot (Sinkhorn), optionally weighted
 ├── towers/
 │   ├── query.py        text -> single vector or token set
 │   ├── doc.py          page image -> single vector
@@ -290,14 +322,14 @@ nanovdr/
 ├── teacher.py        one-off target precomputation  (nanovdr-cache)
 ├── data.py           mixtures of datasets paired with cached targets
 ├── tiling.py         re-export of the tiling rule from processing_doc
-├── scoring.py        dot product | MaxSim, dispatched on geometry
+├── scoring.py        dot product | MaxSim | meanMaxSim, dispatched on geometry
 ├── evaluation.py     ViDoRe scoring and deployment profiling  (nanovdr-eval)
 ├── config.py         YAML loading with ${VAR} expansion
 └── train/
     ├── engine.py       the loop, shared by both towers
     ├── doc.py          entry point
     └── query.py        entry point
-configs/              the four released recipes
+configs/              the released recipes
 packaging/            training checkpoint -> Hub package, and its verifier
 tests/                objective registry and preprocessing tests, no GPU needed
 ```

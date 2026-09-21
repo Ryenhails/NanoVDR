@@ -1,6 +1,12 @@
 """Train the query tower, single-vector or multi-vector.
 
     python -m nanovdr.train.query --config configs/query/distilbert_8b.yaml
+    python -m nanovdr.train.query --config configs/query/ettin150m_colqwen35_otw.yaml
+
+The geometry in the config decides everything downstream: which head the tower
+carries, which objective is legal, which target cache is read, and how a batch
+is collated. A single-vector run pairs fixed-width targets; a multi-vector run
+pairs ragged teacher token sets.
 """
 
 from __future__ import annotations
@@ -9,7 +15,13 @@ import argparse
 
 from ..align import get_align_loss
 from ..config import load_config
-from ..data import QueryTargetDataset, SourceSpec, make_query_collate
+from ..data import (
+    QueryTargetDataset,
+    QueryTokenTargetDataset,
+    SourceSpec,
+    make_query_collate,
+    make_query_token_collate,
+)
 from ..towers import QueryTower
 from .engine import TrainConfig, train
 
@@ -31,12 +43,19 @@ def main() -> int:
         max_length=cfg.get("max_length", 512),
     )
 
-    dataset = QueryTargetDataset([SourceSpec(**s) for s in cfg["sources"]], embed_dim=cfg["embed_dim"])
-    val = (
-        QueryTargetDataset([SourceSpec(**s) for s in cfg["val_sources"]], embed_dim=cfg["embed_dim"], verbose=False)
-        if cfg.get("val_sources")
-        else None
-    )
+    if geometry == "multi":
+        def build(specs, verbose=True):
+            return QueryTokenTargetDataset([SourceSpec(**s) for s in specs], verbose=verbose)
+        collate = make_query_token_collate(tower, cfg.get("max_length", 512))
+    else:
+        def build(specs, verbose=True):
+            return QueryTargetDataset(
+                [SourceSpec(**s) for s in specs], embed_dim=cfg["embed_dim"], verbose=verbose
+            )
+        collate = make_query_collate(tower, cfg.get("max_length", 512))
+
+    dataset = build(cfg["sources"])
+    val = build(cfg["val_sources"], verbose=False) if cfg.get("val_sources") else None
 
     loss_fn = get_align_loss(
         cfg.get("align", "cosine" if geometry == "single" else "ot"),
@@ -48,7 +67,7 @@ def main() -> int:
     train(
         tower,
         dataset,
-        make_query_collate(tower, cfg.get("max_length", 512)),
+        collate,
         loss_fn,
         tcfg,
         forward_fn=lambda t, b: t(input_ids=b["input_ids"], attention_mask=b["attention_mask"]),

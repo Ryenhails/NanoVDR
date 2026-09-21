@@ -23,10 +23,18 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .teacher import load_targets
+from .teacher import load_multivector_targets, load_targets
 from .towers.processing_doc import NanoVDRDocImageProcessor
 
-__all__ = ["SourceSpec", "DocTargetDataset", "QueryTargetDataset", "doc_collate", "make_query_collate"]
+__all__ = [
+    "SourceSpec",
+    "DocTargetDataset",
+    "QueryTargetDataset",
+    "QueryTokenTargetDataset",
+    "doc_collate",
+    "make_query_collate",
+    "make_query_token_collate",
+]
 
 
 @dataclass
@@ -173,6 +181,94 @@ def make_query_collate(tower, max_length: int = 512):
     def collate(batch: list[dict]) -> dict[str, torch.Tensor]:
         enc = tower.tokenize([b["text"] for b in batch])
         enc["target"] = torch.stack([b["target"] for b in batch])
+        return enc
+
+    return collate
+
+
+# --------------------------------------------------------------------------
+# Multi-vector query targets
+# --------------------------------------------------------------------------
+@dataclass
+class _TokenPart:
+    ds: Any
+    tokens: torch.Tensor
+    offsets: np.ndarray
+    valid: np.ndarray
+    column: str
+    upsample: int = 1
+
+
+class QueryTokenTargetDataset(Dataset):
+    """Query strings with their cached teacher *token sets*.
+
+    The single-vector dataset can stack its targets because every row is the
+    same width. Here each row is a ``(K_i, D)`` block with its own ``K_i``, so
+    the cache is stored ragged (see ``teacher.cache_multivector_targets``) and
+    sliced per item; padding happens once per batch in the collate, not once
+    per cache on disk.
+    """
+
+    def __init__(
+        self,
+        sources: Sequence[SourceSpec],
+        column: str = "query",
+        verbose: bool = True,
+    ):
+        from datasets import Dataset as HFDataset
+
+        if not sources:
+            raise ValueError("Need at least one source.")
+        self.parts: list[_TokenPart] = []
+        for spec in sources:
+            ds = HFDataset.load_from_disk(spec.path)
+            tokens, offsets, valid = load_multivector_targets(spec.targets)
+            col = spec.column or column
+            if col not in ds.column_names:
+                raise ValueError(f"{spec.path}: column {col!r} not found; have {ds.column_names}")
+            if len(ds) != len(offsets) - 1:
+                raise ValueError(
+                    f"{spec.path}: {len(ds)} rows but {len(offsets)-1} cached targets. "
+                    "The target cache must be row-aligned with its dataset."
+                )
+            self.parts.append(_TokenPart(ds, tokens, offsets, valid, col, max(1, int(spec.upsample))))
+            if verbose:
+                print(f"  {spec.path}: {len(valid)}/{len(ds)} usable x{spec.upsample}", flush=True)
+
+        self.index: list[tuple[int, int]] = []
+        for pi, part in enumerate(self.parts):
+            for _ in range(part.upsample):
+                self.index.extend((pi, int(row)) for row in part.valid)
+        if verbose:
+            print(f"  mixture: {len(self.index)} samples from {len(self.parts)} source(s)", flush=True)
+
+    def __len__(self) -> int:
+        return len(self.index)
+
+    def __getitem__(self, i: int) -> dict:
+        pi, row = self.index[i]
+        part = self.parts[pi]
+        lo, hi = int(part.offsets[row]), int(part.offsets[row + 1])
+        return {"text": part.ds[row][part.column], "target": part.tokens[lo:hi]}
+
+
+def make_query_token_collate(tower, max_length: int = 512):
+    """Collate for multi-vector targets: tokenise, then right-pad the teacher
+    token sets into ``(B, K, D)`` with a companion ``target_mask``."""
+
+    def collate(batch: list[dict]) -> dict[str, torch.Tensor]:
+        enc = tower.tokenize([b["text"] for b in batch])
+        blocks = [b["target"] for b in batch]
+        k = max(int(x.shape[0]) for x in blocks)
+        dim = blocks[0].shape[1]
+        target = torch.zeros(len(blocks), k, dim)
+        mask = torch.zeros(len(blocks), k, dtype=torch.bool)
+        for i, x in enumerate(blocks):
+            n = int(x.shape[0])
+            target[i, :n] = x
+            mask[i, :n] = True
+        enc["target"] = target
+        enc["target_mask"] = mask
         return enc
 
     return collate
