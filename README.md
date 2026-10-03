@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://arxiv.org/abs/2603.12824"><img src="https://img.shields.io/badge/NanoVDR-arXiv%202603.12824-b31b1b?style=for-the-badge" alt="NanoVDR paper"></a>
   <a href="https://arxiv.org/abs/2608.10636"><img src="https://img.shields.io/badge/DistilVDR-arXiv%202608.10636-b31b1b?style=for-the-badge" alt="DistilVDR paper"></a>
+  <a href="https://arxiv.org/abs/2609.34899"><img src="https://img.shields.io/badge/ColNanoVDR-arXiv%202609.34899-b31b1b?style=for-the-badge" alt="ColNanoVDR paper"></a>
   <a href="https://huggingface.co/nanovdr"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Models-nanovdr-FFD21E?style=for-the-badge" alt="Hugging Face"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License"></a>
 </p>
@@ -317,7 +318,7 @@ a hard failure, not a warning.
 |---|---|---|
 | **NanoVDR** | The main line: a 70M text-only query tower distilled from a 2B teacher. Accepted to the EMNLP 2026 Main Conference. | [arXiv:2603.12824](https://arxiv.org/abs/2603.12824) · [blog](https://huggingface.co/blog/Ryenhails/nanovdr) |
 | **DistilVDR** | The branch: adds the document tower, so both sides are students and the teacher is gone at deployment. | [arXiv:2608.10636](https://arxiv.org/abs/2608.10636) · [write-up](https://huggingface.co/spaces/nanovdr/distilling-the-document-tower) |
-| **ColNanoVDR** | Multi-vector query towers by document-free transport alignment. Models released; paper in preparation. | [models](https://huggingface.co/nanovdr) |
+| **ColNanoVDR** | Multi-vector query towers by document-free transport alignment. | [arXiv:2609.34899](https://arxiv.org/abs/2609.34899) · [models](https://huggingface.co/nanovdr) |
 
 ## Citation
 
@@ -336,6 +337,16 @@ a hard failure, not a warning.
   author  = {Liu, Zhuchenyang and Wang, Ziyi and Zhang, Yao and Xiao, Yu},
   journal = {arXiv preprint arXiv:2608.10636},
   year    = {2026}
+}
+
+@misc{liu2026colnanovdrdocumentfreequerydistillation,
+      title={ColNanoVDR: Document-Free Query Distillation for Multi-Vector Visual Document Retrieval via Optimal Transport}, 
+      author={Zhuchenyang Liu and Ziyi Wang and Yao Zhang and Yu Xiao},
+      year={2026},
+      eprint={2609.34899},
+      archivePrefix={arXiv},
+      primaryClass={cs.IR},
+      url={https://arxiv.org/abs/2609.34899}, 
 }
 ```
 

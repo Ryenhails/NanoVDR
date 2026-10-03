@@ -1,6 +1,6 @@
 # ColNanoVDR-Q: multi-vector query towers
 
-[← back to the main README](../README.md) · [NanoVDR-Q](nanovdr-q.md) · [NanoVDR-D](nanovdr-d.md)
+[← back to the main README](../README.md) · [NanoVDR-Q](nanovdr-q.md) · [NanoVDR-D](nanovdr-d.md) · [Paper (arXiv:2609.34899)](https://arxiv.org/abs/2609.34899)
 
 The state of the art in visual document retrieval is **late interaction**:
 ColPali-style models that emit a *set* of vectors per input and score by MaxSim.
@@ -149,7 +149,7 @@ Supported teacher keys are `colqwen35`, `vultron`, `tomoro8b`, `colvec4b` and
 `nanovdr.teacher.MultiVectorTeacher` hides.
 
 The released recipe: `eps = 0.05`, 50 Sinkhorn iterations, AdamW one-cycle, peak
-LR 3e-4 with 3% warmup, effective batch 512 (128 x 4 accumulation), 10 epochs,
+LR 3e-4 with 3% warmup, effective batch 1024 (128 per GPU x 2 GPUs x 4 accumulation), 10 epochs,
 on 1.49M queries (711K English plus 778K MarianMT translations into five
 Latin-script European languages).
 
