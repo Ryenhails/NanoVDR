@@ -5,6 +5,7 @@
 <h3 align="center">Small retrievers for visual documents,<br>trained by aligning directly to a frozen VLM's embedding space</h3>
 
 <p align="center">
+  <a href="https://ryenhails.github.io/NanoVDR/"><img src="https://img.shields.io/badge/Project-Page-0b57d0?style=for-the-badge" alt="Project page"></a>
   <a href="https://arxiv.org/abs/2603.12824"><img src="https://img.shields.io/badge/NanoVDR-arXiv%202603.12824-b31b1b?style=for-the-badge" alt="NanoVDR paper"></a>
   <a href="https://arxiv.org/abs/2608.10636"><img src="https://img.shields.io/badge/DistilVDR-arXiv%202608.10636-b31b1b?style=for-the-badge" alt="DistilVDR paper"></a>
   <a href="https://arxiv.org/abs/2609.34899"><img src="https://img.shields.io/badge/ColNanoVDR-arXiv%202609.34899-b31b1b?style=for-the-badge" alt="ColNanoVDR paper"></a>
@@ -13,6 +14,7 @@
 </p>
 
 <p align="center">
+  [[<a href="https://ryenhails.github.io/NanoVDR/">Project page</a>]]
   [[<a href="https://huggingface.co/nanovdr">Models</a>]]
   [[<a href="https://huggingface.co/spaces/nanovdr/NanoVDR-Demo">Demo</a>]]
   [[<a href="https://huggingface.co/blog/Ryenhails/nanovdr">Blog</a>]]
